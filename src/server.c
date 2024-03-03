@@ -1794,6 +1794,9 @@ static THREAD_F cmd_listen_thread (void *arg)
 		}
 		else {
 
+			/* Check the xmit queue, if corked, wait here */
+			tq_wait_while_corked(cmd.hdr.portx);
+
 		  /* How can we determine if it is an original or repeated message? */
 		  /* If there is at least one digipeater in the frame, AND */
 		  /* that digipeater has been used, it should go out quickly thru */

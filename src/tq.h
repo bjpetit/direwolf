@@ -30,6 +30,8 @@ void lm_seize_request (int chan);
 
 void tq_wait_while_empty (int chan);
 
+void tq_wait_while_corked (int chan);
+
 packet_t tq_remove (int chan, int prio);
 
 packet_t tq_peek (int chan, int prio);

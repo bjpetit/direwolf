@@ -57,6 +57,12 @@
 
 static packet_t queue_head[MAX_CHANS][TQ_NUM_PRIO];	/* Head of linked list for each queue. */
 
+/* Cork input upon max depth */
+#define MAX_QUEUE_DEPTH 100
+static int queue_corked[MAX_CHANS];
+static pthread_cond_t cork_cond[MAX_CHANS];		/* Notify transmit input when queue not full. */
+static pthread_mutex_t cork_mutex[MAX_CHANS];	/* Required by cond_wait. */
+
 
 static dw_mutex_t tq_mutex;				/* Critical section for updating queues. */
 							/* Just one for all queues. */
@@ -132,6 +138,7 @@ void tq_init (struct audio_s *audio_config_p)
 	  for (p=0; p<TQ_NUM_PRIO; p++) {
 	    queue_head[c][p] = NULL;
 	  }
+		queue_corked[c] = 0;
 	}
 
 /*
@@ -140,6 +147,8 @@ void tq_init (struct audio_s *audio_config_p)
 
 	dw_mutex_init(&tq_mutex);
 
+/* queue cork setup */
+	dw_mutex_init(&cork_mutex);
 /*
  * Windows and Linux have different wake up methods.
  * Put a wrapper around this someday to hide the details.
@@ -324,12 +333,20 @@ void tq_append (int chan, int prio, packet_t pp)
  * Limit was 20.  Changed to 100 in version 1.2 as a workaround.
  */
 
-	if (ax25_is_aprs(pp) && tq_count(chan,prio,"","",0) > 100) {
-	  text_color_set(DW_COLOR_ERROR);
-	  dw_printf ("Transmit packet queue for channel %d is too long.  Discarding packet.\n", chan);
-	  dw_printf ("Perhaps the channel is so busy there is no opportunity to send.\n");
-	  ax25_delete(pp);
-	  return;
+	if (tq_count(chan,prio,"","",0) > MAX_QUEUE_DEPTH) {
+		if (ax25_is_aprs(pp)) {
+	  	text_color_set(DW_COLOR_ERROR);
+	  	dw_printf ("Transmit packet queue for channel %d is too long.  Discarding packet.\n", chan);
+	  	dw_printf ("Perhaps the channel is so busy there is no opportunity to send.\n");
+	  	ax25_delete(pp);
+	  	return;
+		} else {
+			/* Otherwise, throttle the input a bit */
+			dw_printf ("Pausing tx queue input, chan %d\n", chan);
+			dw_mutex_lock (&cork_mutex[chan]);
+			queue_corked[chan] = 1;
+			dw_mutex_unlock (&cork_mutex[chan]);
+		}
 	}
 
 #if DEBUG
@@ -817,6 +834,33 @@ void tq_wait_while_empty (int chan)
 
 }
 
+/*-------------------------------------------------------------------
+ *
+ * Name:        tq_wait_while_corked
+ *
+ * Purpose:     Hold the input loop if the tx queue is full
+ *
+ * Inputs:	chan	- Channel, 0 is first.	
+ *
+ *--------------------------------------------------------------------*/
+void tq_wait_while_corked (int chan)
+{
+
+	dw_mutex_lock(&cork_mutex[chan]);
+	if(queue_corked[chan]) {
+#if DEBUG || 1
+	text_color_set(DW_COLOR_DEBUG);
+	dw_printf ("tq_wait_while_corked(%d) entering cond_wait\n", chan);
+#endif
+		pthread_cond_wait(&cork_cond[chan], &cork_mutex[chan]);
+#if DEBUG || 1
+	text_color_set(DW_COLOR_DEBUG);
+	dw_printf ("tq_wait_while_corked(%d) awake\n", chan);
+#endif		
+	}
+	dw_mutex_unlock(&cork_mutex[chan]);
+
+}
 
 /*-------------------------------------------------------------------
  *
@@ -857,6 +901,16 @@ packet_t tq_remove (int chan, int prio)
 	}
 	 
 	dw_mutex_unlock (&tq_mutex);
+
+  /* If were below the max queue depth uncork */
+	dw_mutex_lock (&cork_mutex[chan]);
+	if (queue_corked[chan]) {
+		if(tq_count(chan,prio,"","",0) < MAX_QUEUE_DEPTH) {
+			queue_corked[chan] = 0;
+			pthread_cond_signal(&cork_cond[chan]);
+		}
+	}
+	dw_mutex_unlock(&cork_mutex[chan]);
 
 #if DEBUG
 	text_color_set(DW_COLOR_DEBUG);
