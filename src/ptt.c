@@ -724,6 +724,10 @@ void ptt_init (struct audio_s *audio_config_p)
 	int using_gpio;
 #endif
 
+#if USE_GPIOD
+	gpio_common_init();
+#endif
+
 #if DEBUG
 	text_color_set(DW_COLOR_DEBUG);
 	dw_printf ("ptt_init ( ... )\n");
@@ -760,7 +764,6 @@ void ptt_init (struct audio_s *audio_config_p)
 		audio_config_p->achan[ch].octrl[ot].ptt_invert);
 	    }
 	  }
-		gpio_common_init();
 	}
 
 /*

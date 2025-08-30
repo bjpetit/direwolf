@@ -8,7 +8,7 @@
 #include "gpio_common.h"
 
 #define GPIO_MAX_LINES 32
-#define GPIO_CONSUMER "FLDIGI"
+#define GPIO_CONSUMER "DIREWOLF"
 
 //Types
 typedef struct gpio_common {
@@ -20,6 +20,9 @@ typedef struct gpio_common {
 // local variables
 
 static gpio_common_t gpio[GPIO_MAX_LINES];
+
+
+// Function implementations
 
 void gpio_common_init(void) {
   fprintf(stderr, "Initializing GPIO common structure\n");
@@ -132,7 +135,7 @@ out:
 
 int gpio_common_release_line(gpio_num_t gpio_num) {
   if (gpio_num >= GPIO_MAX_LINES) {
-    return -1;
+    return GPIO_COMMON_ERR;
   }
 
   if (gpio[gpio_num].request != NULL) {
@@ -146,7 +149,7 @@ int gpio_common_release_line(gpio_num_t gpio_num) {
 
 int gpio_common_set(gpio_num_t gpio_num, bool val) {
   if (gpio_num >= GPIO_MAX_LINES || gpio[gpio_num].request == NULL) {
-    return -1;
+    return GPIO_COMMON_ERR;
   }
   uint16_t gpiod_val;
 
@@ -160,7 +163,7 @@ int gpio_common_set(gpio_num_t gpio_num, bool val) {
   int ret = gpiod_line_request_set_value(gpio[gpio_num].request, gpio[gpio_num].offset, gpiod_val);
   if (ret < 0) {
     fprintf(stderr, "Error setting line\n");
-    return -1;
+    return GPIO_COMMON_ERR;
   }
   return 0;
 }

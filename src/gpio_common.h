@@ -1,3 +1,7 @@
+#ifndef GPIO_COMMON_H
+#define GPIO_COMMON_H
+
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -5,9 +9,10 @@ extern "C" {
 #include <gpiod.h>
 #include <stdint.h>
 
-
-
+// Types
 typedef uint16_t gpio_num_t;
+
+// Return values
 #define GPIO_COMMON_UNKNOWN           UINT16_MAX
 #define GPIO_COMMON_OK                0
 #define GPIO_COMMON_ERR               -1
@@ -23,3 +28,5 @@ int gpio_common_set(gpio_num_t gpio_num, bool val);
 #ifdef __cplusplus
 }
 #endif
+
+#endif // GPIO_COMMON_H
