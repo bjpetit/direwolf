@@ -104,6 +104,7 @@ list(APPEND direwolf_SOURCES
   dwgpsnmea.c
   dwgpsd.c
   mheard.c
+  gpio_common.c
   )
 
 if(LINUX)
