@@ -69,6 +69,7 @@
 #define AX25_PID_NETROM 0xcf			/* protocol ID used for NET/ROM */
 #define AX25_PID_SEGMENTATION_FRAGMENT 0x08
 #define AX25_PID_ESCAPE_CHARACTER 0xff
+#define AX25_PID_ZLIB_COMPRESSED 0xf5		/* Dave's creation */
 
 
 #ifdef AX25_PAD_C	/* Keep this hidden - implementation could change. */

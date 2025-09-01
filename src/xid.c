@@ -67,6 +67,12 @@
 #define PI_Ack_Timer			9	
 #define PI_Retries			10	
 
+// Is this stanard or Dave's creation?
+#define PI_Compression_Algorithm_Mask	65
+#define PI_TX_Window_Bits		66
+#define PI_RX_Window_Bits		67
+
+
 // Forget about the bit order at the physical layer (e.g. HDLC).
 // It doesn't matter at all here.  We are dealing with bytes.
 // A different encoding could send the bits in the opposite order.
@@ -346,6 +352,10 @@ int xid_parse (unsigned char *info, int info_len, struct xid_param_s *result, ch
 	      strlcat (desc, stemp, desc_size);
 
 	      break;
+
+		// PI_Compression_Algorithm_Mask
+		// PI_TX_Window_Bits
+		// PI_RX_Window_Bits
 
 	    default:		
 	      break;	// Ignore anything we don't recognize.
