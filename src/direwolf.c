@@ -305,7 +305,7 @@ int main (int argc, char *argv[])
 	text_color_init(t_opt);
 	text_color_set(DW_COLOR_INFO);
 	//dw_printf ("Dire Wolf version %d.%d (%s) BETA TEST 7\n", MAJOR_VERSION, MINOR_VERSION, __DATE__);
-	dw_printf ("Dire Wolf DEVELOPMENT version %d.%d %s (%s)\n", MAJOR_VERSION, MINOR_VERSION, "D", __DATE__);
+	dw_printf ("Dire Wolf DEVELOPMENT version %d.%d %s (%s)\n", MAJOR_VERSION, MINOR_VERSION, "E", __DATE__);
 	//dw_printf ("Dire Wolf version %d.%d\n", MAJOR_VERSION, MINOR_VERSION);
 
 
@@ -321,7 +321,9 @@ int main (int argc, char *argv[])
 	dw_printf (" cm108-ptt");
  #endif
  #if defined(USE_GPIOD)
-	dw_printf (" libgpiod");
+ #define STRINGIFY(x) STRINGIFY2(x)
+ #define STRINGIFY2(x) #x
+        dw_printf (" libgpiod-%s", STRINGIFY(LIBGPIOD_VERSION));
  #endif
  #if (USE_AVAHI_CLIENT|USE_MACOS_DNSSD)
 	dw_printf (" dns-sd");

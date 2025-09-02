@@ -5,7 +5,7 @@
  *
  * Purpose:   	Interface to audio device commonly called a "sound card"
  *		for historical reasons.
- *		
+ *
  *---------------------------------------------------------------*/
 
 
@@ -19,13 +19,14 @@
 #include "direwolf.h"		/* for MAX_RADIO_CHANS and MAX_TOTAL_CHANS used throughout the application. */
 #include "ax25_pad.h"		/* for AX25_MAX_ADDR_LEN */
 #include "version.h"
-				
+#include "gpio_common.h"
+
 
 /*
- * PTT control. 
+ * PTT control.
  */
 
-enum ptt_method_e { 
+enum ptt_method_e {
 	PTT_METHOD_NONE,	/* VOX or no transmit. */
 	PTT_METHOD_SERIAL,	/* Serial port RTS or DTR. */
 	PTT_METHOD_GPIO,	/* General purpose I/O using sysfs, deprecated after 2020, Linux only. */
@@ -63,7 +64,7 @@ enum medium_e { MEDIUM_NONE = 0,	// Channel is not valid for use.
 
 
 typedef enum sanity_e { SANITY_APRS, SANITY_AX25, SANITY_NONE } sanity_t;
-			 
+
 
 struct audio_s {
 
@@ -276,7 +277,7 @@ struct audio_s {
 
 
 	/* Additional properties for transmit. */
-	
+
 	/* Originally we had control outputs only for PTT. */
 	/* In version 1.2, we generalize this to allow others such as DCD. */
 	/* In version 1.4 we add CON for connected to another station. */
@@ -288,8 +289,8 @@ struct audio_s {
 #define OCTYPE_CON 2
 
 #define NUM_OCTYPES 3		/* number of values above.   i.e. last value +1. */
-	
-	    struct {  		
+
+	    struct {
 
 	        ptt_method_t ptt_method; /* none, serial port, GPIO, LPT, HAMLIB, CM108. */
 
@@ -304,7 +305,7 @@ struct audio_s {
 					/* have a name like /dev/hidraw1 for Linux or */
 					/* \\?\hid#vid_0d8c&pid_0008&mi_03#8&39d3555&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030} */
 					/* for Windows.  Largest observed was 95 but add some extra to be safe. */
-			
+
 	        ptt_line_t ptt_line;	/* Control line when using serial port. PTT_LINE_RTS, PTT_LINE_DTR. */
 	        ptt_line_t ptt_line2;	/* Optional second one:  PTT_LINE_NONE when not used. */
 
@@ -330,6 +331,11 @@ struct audio_s {
 
 	        int ptt_invert;		/* Invert the output. */
 	        int ptt_invert2;	/* Invert the secondary output. */
+#if USE_GPIOD
+#if LIBGPIOD_VERSION_MAJOR >= 2
+	        gpio_num_t gpio_num;	/* Handle from libgpiod.  Valid only when ptt_method is PTT_METHOD_GPIOD. */
+#endif
+#endif
 
 #ifdef USE_HAMLIB
 

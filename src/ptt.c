@@ -22,7 +22,7 @@
  * Module:      ptt.c
  *
  * Purpose:   	Activate the output control lines for push to talk (PTT) and other purposes.
- *		
+ *
  * Description:	Traditionally this is done with the RTS signal of the serial port.
  *
  *		If we have two radio channels and only one serial port, DTR
@@ -37,7 +37,7 @@
  *
  *		This is hardcoded to use the primary motherboard parallel
  *		printer port at I/O address 0x378.  This might work with
- *		a PCI card configured to use the same address if the 
+ *		a PCI card configured to use the same address if the
  *		motherboard does not have a built in parallel port.
  *		It won't work with a USB-to-parallel-printer-port adapter.
  *
@@ -130,7 +130,7 @@
 	USB-Audio adapters.  It would be nice to have a little script which lists all
 	of the USB-Audio adapters and the corresponding /dev/hidraw device.
 	( We now have it.  The included "cm108" application. )
-	
+
 	In version 1.5 we have a flexible, easy to use implementation for Linux.
 	Windows would be a lot of extra work because USB devices are nothing like Linux.
 	We'd be starting from scratch to figure out how to do it.
@@ -163,8 +163,12 @@
 #endif
 
 #ifdef USE_GPIOD
+#if LIBGPIOD_VERSION_MAJOR >= 2
+#include "gpio_common.h"
+#else
 #include <gpiod.h>
-#endif 
+#endif
+#endif
 
 /* So we can have more common code for fd. */
 typedef int HANDLE;
@@ -653,6 +657,11 @@ void export_gpio(int ch, int ot, int invert, int direction)
 }
 
 #if defined(USE_GPIOD)
+
+// TODO:  Maybe move to gpio_common.c or rewrite.
+
+#if LIBGPIOD_VERSION_MAJOR == 1
+
 int gpiod_probe(const char *chip_dev_path, int line_number)
 {
 	// chip_dev_path must be complete device path such as /dev/gpiochip3
@@ -678,7 +687,11 @@ int gpiod_probe(const char *chip_dev_path, int line_number)
 	}
 	return 0;
 }
-#endif   /* USE_GPIOD */
+
+#endif	// LIBGPIOD_VERSION_MAJOR == 1
+
+#endif	/* USE_GPIOD */
+
 #endif   /* not __WIN32__ */
 
 
@@ -725,7 +738,7 @@ int gpiod_probe(const char *chip_dev_path, int line_number)
  *
  * Outputs:	Remember required information for future use.
  *
- * Description:	
+ * Description:
  *
  *--------------------------------------------------------------------*/
 
@@ -734,7 +747,7 @@ int gpiod_probe(const char *chip_dev_path, int line_number)
 
 static HANDLE ptt_fd[MAX_RADIO_CHANS][NUM_OCTYPES];
 					/* Serial port handle or fd.  */
-					/* Could be the same for two channels */	
+					/* Could be the same for two channels */
 					/* if using both RTS and DTR. */
 #if USE_HAMLIB
 static RIG *rig[MAX_RADIO_CHANS][NUM_OCTYPES];
@@ -749,6 +762,12 @@ void ptt_init (struct audio_s *audio_config_p)
 #if __WIN32__
 #else
 	int using_gpio;
+#endif
+
+#if USE_GPIOD
+#if LIBGPIOD_VERSION_MAJOR >= 2
+	gpio_common_init();
+#endif
 #endif
 
 #if DEBUG
@@ -778,7 +797,7 @@ void ptt_init (struct audio_s *audio_config_p)
               dw_printf ("ch=%d, %s method=%d, device=%s, line=%d, name=%s, gpio=%d, lpt_bit=%d, invert=%d\n",
 		ch,
 		otnames[ot],
-		audio_config_p->achan[ch].octrl[ot].ptt_method, 
+		audio_config_p->achan[ch].octrl[ot].ptt_method,
 		audio_config_p->achan[ch].octrl[ot].ptt_device,
 		audio_config_p->achan[ch].octrl[ot].ptt_line,
 		audio_config_p->achan[ch].octrl[ot].out_gpio_name,
@@ -837,7 +856,7 @@ void ptt_init (struct audio_s *audio_config_p)
 	        }
 
 	        if ( ! same_device_used) {
-	
+
 #if __WIN32__
 	          char bettername[50];
 	          // Bug fix in release 1.1 - Need to munge name for COM10 and up.
@@ -887,7 +906,7 @@ void ptt_init (struct audio_s *audio_config_p)
 /*
  * Set initial state off.
  * ptt_set will invert output signal if appropriate.
- */	  
+ */
 	        ptt_set (ot, ch, 0);
 
 	      }    /* if serial method. */
@@ -896,7 +915,7 @@ void ptt_init (struct audio_s *audio_config_p)
 	}    /* For each channel. */
 
 
-/* 
+/*
  * Set up GPIO - for Linux only.
  */
 
@@ -935,8 +954,14 @@ void ptt_init (struct audio_s *audio_config_p)
 	      if (audio_config_p->achan[ch].octrl[ot].ptt_method == PTT_METHOD_GPIOD) {
 	        const char *chip_name = audio_config_p->achan[ch].octrl[ot].out_gpio_name;
 	        int line_number = audio_config_p->achan[ch].octrl[ot].out_gpio_num;
+
+#if LIBGPIOD_VERSION_MAJOR >= 2
+	        audio_config_p->achan[ch].octrl[ot].gpio_num = gpio_common_open_line(chip_name, line_number, false);
+	        if (audio_config_p->achan[ch].octrl[ot].gpio_num == GPIO_COMMON_UNKNOWN) {
+#else
 	        int rc = gpiod_probe(chip_name, line_number);
 	        if (rc < 0) {
+#endif
 	          text_color_set(DW_COLOR_ERROR);
 		  //No, people won't notice the error message and be confused.  Just terminate.
 	          //dw_printf ("Disable PTT for channel %d\n", ch);
@@ -953,10 +978,10 @@ void ptt_init (struct audio_s *audio_config_p)
 	}
 #endif /* USE_GPIOD */
 /*
- * We should now be able to create the device nodes for 
+ * We should now be able to create the device nodes for
  * the pins we want to use.
  */
-	    
+
 	for (ch = 0; ch < MAX_RADIO_CHANS; ch++) {
 	  if (save_audio_config_p->chan_medium[ch] == MEDIUM_RADIO) {
 
@@ -981,7 +1006,7 @@ void ptt_init (struct audio_s *audio_config_p)
 
 /*
  * Set up parallel printer port.
- * 
+ *
  * Restrictions:
  * 	Only the primary printer port.
  * 	For x86 Linux only.
@@ -1003,7 +1028,7 @@ void ptt_init (struct audio_s *audio_config_p)
 
 	        int same_device_used = 0;
 	        int j, k;
-	
+
 	        for (j = ch; j >= 0; j--) {
 	          if (audio_config_p->chan_medium[j] == MEDIUM_RADIO) {
 		    for (k = ((j==ch) ? (ot - 1) : (NUM_OCTYPES-1)); k >= 0; k--) {
@@ -1038,12 +1063,12 @@ void ptt_init (struct audio_s *audio_config_p)
 
 	          audio_config_p->achan[ch].octrl[ot].ptt_method = PTT_METHOD_NONE;
 	        }
-	    
+
 
 /*
  * Set initial state off.
  * ptt_set will invert output signal if appropriate.
- */	  
+ */
 	        ptt_set (ot, ch, 0);
 
 	      }       /* if parallel printer port method. */
@@ -1394,7 +1419,13 @@ void ptt_set (int ot, int chan, int ptt_signal)
 	if (save_audio_config_p->achan[chan].octrl[ot].ptt_method == PTT_METHOD_GPIOD) {
 		const char *chip = save_audio_config_p->achan[chan].octrl[ot].out_gpio_name;
 		int line = save_audio_config_p->achan[chan].octrl[ot].out_gpio_num;
+
+
+#if LIBGPIOD_VERSION_MAJOR >= 2
+		int rc = gpio_common_set(save_audio_config_p->achan[chan].octrl[ot].gpio_num, ptt);
+#else
 		int rc = gpiod_ctxless_set_value(chip, line, ptt, false, "direwolf", NULL, NULL);
+#endif
 		if (ptt_debug_level >= 1) {
 			text_color_set(DW_COLOR_DEBUG);
 			dw_printf("PTT_METHOD_GPIOD chip: %s line: %d ptt: %d  rc: %d\n", chip, line, ptt, rc);
@@ -1402,7 +1433,7 @@ void ptt_set (int ot, int chan, int ptt_signal)
 	}
 #endif /* USE_GPIOD */
 #endif
-	
+
 /*
  * Using parallel printer port?
  */
@@ -1413,7 +1444,7 @@ void ptt_set (int ot, int chan, int ptt_signal)
 		ptt_fd[chan][ot] != INVALID_HANDLE_VALUE) {
 
 	  char lpt_data;
-	  //ssize_t n;		
+	  //ssize_t n;
 
 	  lseek (ptt_fd[chan][ot], (off_t)LPT_IO_ADDR, SEEK_SET);
 	  if (read (ptt_fd[chan][ot], &lpt_data, (size_t)1) != 1) {
