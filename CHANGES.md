@@ -14,6 +14,8 @@
 
 - Include the direwolf icon in the Windows executable.  Note:  When building from source, environment variable RC must point to windres location.
 
+- Added support for libgpiod version 2.
+
 ## Version 1.7  --  October 2023
 
 ### New Documentation:

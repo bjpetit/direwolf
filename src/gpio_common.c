@@ -1,9 +1,39 @@
+/*------------------------------------------------------------------
+ *
+ * Module:      gpio_common.c
+ *
+ * Purpose:   	The libgpiod API changed drastically between v1 and v2, as first seen
+ *		in Debian 13 Trixie.
+ *		It is not possible to have the same application code work with both.
+ *		It is necessary to have two sets of code and conditional compilation.
+ *
+ * Environment:	Preprocessor symbols set by build system:
+ *		USE_GPIOD		to include the gpiod code
+ *		LIBGPIOD_VERSION	e.g. 1.2.3
+ *		LIBGPIOD_VERSION_MAJOR	e.g. 1
+ *		LIBGPIOD_VERSION_MINOR	e.g. 2
+ *
+ * Description:	Eventually we would like to put all of the version differences
+ *		in here to avoid cluttering ptt.c more than it is already.
+ *		Currently this is all version 2 code which has no hope of
+ *		building with version 1 library.
+ *
+ *---------------------------------------------------------------*/
+
+#if USE_GPIOD				// Skip all of this if no GPIOD libary present
+
+#if LIBGPIOD_VERSION_MAJOR >= 2		// Someday we might have v1 and v2 sections
+
+#include "direwolf.h"
+
 #include <gpiod.h>
 #include <stdio.h>
 #include <unistd.h>
 
 #include <errno.h>
 #include <string.h>
+
+#include "textcolor.h"
 
 #include "gpio_common.h"
 
@@ -25,7 +55,8 @@ static gpio_common_t gpio[GPIO_MAX_LINES];
 // Function implementations
 
 void gpio_common_init(void) {
-  fprintf(stderr, "Initializing GPIO common structure\n");
+  text_color_set(DW_COLOR_DEBUG);
+  dw_printf("Initializing GPIO common structure\n");
   for (gpio_num_t i = 0; i < GPIO_MAX_LINES; i++) {
     gpio[i].used = false;
   }
@@ -44,11 +75,13 @@ gpio_num_t gpio_common_open_line(const char *chip_name, unsigned int line, bool 
   gpio_num = GPIO_COMMON_UNKNOWN;
 
   if (chip_name == NULL) {
-    fprintf(stderr, "No chip name supplied.\n");
+    text_color_set(DW_COLOR_ERROR);
+    dw_printf("No chip name supplied.\n");
     goto out;
   }
 
-  fprintf(stderr, "Opening GPIO line %d on chip %s\n", line, chip_name);
+  text_color_set(DW_COLOR_DEBUG);
+  dw_printf("Opening GPIO line %d on chip %s\n", line, chip_name);
 
   // Get a free slot
   for (gpio_num_t i = 0; i < GPIO_MAX_LINES; i++) {
@@ -59,14 +92,16 @@ gpio_num_t gpio_common_open_line(const char *chip_name, unsigned int line, bool 
   }
 
   if (gpio_num == GPIO_COMMON_UNKNOWN) {
-    fprintf(stderr, "Too many GPIOs open.\n");
+    text_color_set(DW_COLOR_ERROR);
+    dw_printf("Too many GPIOs open.\n");
     goto out;
   }
 
   chip = gpiod_chip_open(chip_name);
 
   if (chip == NULL) {
-    fprintf(stderr, "Failed to open GPIO chip %s\n", chip_name);
+    text_color_set(DW_COLOR_ERROR);
+    dw_printf("Failed to open GPIO chip %s\n", chip_name);
     gpio_num = GPIO_COMMON_UNKNOWN;
     goto out;
   }
@@ -74,7 +109,8 @@ gpio_num_t gpio_common_open_line(const char *chip_name, unsigned int line, bool 
   settings = gpiod_line_settings_new();
 
   if (settings == NULL) {
-    fprintf(stderr, "Unable to allocate memory for line settings \n");
+    text_color_set(DW_COLOR_ERROR);
+    dw_printf("Unable to allocate memory for line settings \n");
     gpio_num = GPIO_COMMON_UNKNOWN;
     goto close_chip;
   }
@@ -93,8 +129,9 @@ gpio_num_t gpio_common_open_line(const char *chip_name, unsigned int line, bool 
 
   ret = gpiod_line_config_add_line_settings(line_cfg, &line, 1,
 						  settings);
-	if (ret < 0) {
-    fprintf(stderr, "Failed to add line settings\n");
+  if (ret < 0) {
+    text_color_set(DW_COLOR_ERROR);
+    dw_printf("Failed to add line settings\n");
     gpio_num = GPIO_COMMON_UNKNOWN;
     goto free_line_config;
   }
@@ -104,12 +141,13 @@ gpio_num_t gpio_common_open_line(const char *chip_name, unsigned int line, bool 
 		goto free_line_config;
   }
 
-  gpiod_request_config_set_consumer(req_cfg, "FLDIGI");
+  gpiod_request_config_set_consumer(req_cfg, GPIO_CONSUMER);
 
   gpio[gpio_num].request = gpiod_chip_request_lines(chip, req_cfg, line_cfg);
 
   if (gpio[gpio_num].request == NULL) {
-    fprintf(stderr, "Failed to request GPIO line %d\n", gpio_num);
+    text_color_set(DW_COLOR_ERROR);
+    dw_printf("Failed to request GPIO line %d\n", gpio_num);
     gpio_num = GPIO_COMMON_UNKNOWN;
     goto free_line_config;
   } else {
@@ -162,7 +200,8 @@ int gpio_common_set(gpio_num_t gpio_num, bool val) {
 
   int ret = gpiod_line_request_set_value(gpio[gpio_num].request, gpio[gpio_num].offset, gpiod_val);
   if (ret < 0) {
-    fprintf(stderr, "Error setting line\n");
+    text_color_set(DW_COLOR_ERROR);
+    dw_printf("Error setting line\n");
     return GPIO_COMMON_ERR;
   }
   return 0;
@@ -177,3 +216,9 @@ int gpio_common_close(void) {
 
   return 0;
 }
+
+#endif		// LIBGPIOD_VERSION_MAJOR >= 2
+
+#endif		// USE_GPIOD
+
+// end gpio_common.c

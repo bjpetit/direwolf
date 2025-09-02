@@ -1,6 +1,9 @@
 #ifndef GPIO_COMMON_H
 #define GPIO_COMMON_H
 
+#if USE_GPIOD		// Skip all if no libgpiod available
+
+#if LIBGPIOD_VERSION_MAJOR >= 2		// Someday we might have v1 and v2 sections
 
 #ifdef __cplusplus
 extern "C" {
@@ -28,5 +31,9 @@ int gpio_common_set(gpio_num_t gpio_num, bool val);
 #ifdef __cplusplus
 }
 #endif
+
+#endif		// LIBGPIOD_VERSION_MAJOR >= 2
+
+#endif 		// USE_GPIOD
 
 #endif // GPIO_COMMON_H

@@ -331,7 +331,11 @@ struct audio_s {
 
 	        int ptt_invert;		/* Invert the output. */
 	        int ptt_invert2;	/* Invert the secondary output. */
-            gpio_num_t gpio_num;	/* Handle from libgpiod.  Valid only when ptt_method is PTT_METHOD_GPIOD. */
+#if USE_GPIOD
+#if LIBGPIOD_VERSION_MAJOR >= 2
+	        gpio_num_t gpio_num;	/* Handle from libgpiod.  Valid only when ptt_method is PTT_METHOD_GPIOD. */
+#endif
+#endif
 
 #ifdef USE_HAMLIB
 

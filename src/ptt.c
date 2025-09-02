@@ -163,7 +163,11 @@
 #endif
 
 #ifdef USE_GPIOD
+#if LIBGPIOD_VERSION_MAJOR >= 2
 #include "gpio_common.h"
+#else
+#include <gpiod.h>
+#endif
 #endif
 
 /* So we can have more common code for fd. */
@@ -652,6 +656,42 @@ void export_gpio(int ch, int ot, int invert, int direction)
 	get_access_to_gpio (gpio_value_path);
 }
 
+#if defined(USE_GPIOD)
+
+// TODO:  Maybe move to gpio_common.c or rewrite.
+
+#if LIBGPIOD_VERSION_MAJOR == 1
+
+int gpiod_probe(const char *chip_dev_path, int line_number)
+{
+	// chip_dev_path must be complete device path such as /dev/gpiochip3
+
+	struct gpiod_chip *chip;
+	chip = gpiod_chip_open(chip_dev_path);
+	if (chip == NULL) {
+		text_color_set(DW_COLOR_ERROR);
+		dw_printf ("Can't open GPIOD chip %s.\n", chip_dev_path);
+		return -1;
+	}
+
+	struct gpiod_line *line;
+	line = gpiod_chip_get_line(chip, line_number);
+	if (line == NULL) {
+		text_color_set(DW_COLOR_ERROR);
+		dw_printf ("Can't get GPIOD line %d.\n", line_number);
+		return -1;
+	}
+	if (ptt_debug_level >= 2) {
+		text_color_set(DW_COLOR_DEBUG);
+		dw_printf("GPIOD probe OK. Chip: %s line: %d\n", chip_dev_path, line_number);
+	}
+	return 0;
+}
+
+#endif	// LIBGPIOD_VERSION_MAJOR == 1
+
+#endif	/* USE_GPIOD */
+
 #endif   /* not __WIN32__ */
 
 
@@ -725,7 +765,9 @@ void ptt_init (struct audio_s *audio_config_p)
 #endif
 
 #if USE_GPIOD
+#if LIBGPIOD_VERSION_MAJOR >= 2
 	gpio_common_init();
+#endif
 #endif
 
 #if DEBUG
@@ -912,9 +954,15 @@ void ptt_init (struct audio_s *audio_config_p)
 	      if (audio_config_p->achan[ch].octrl[ot].ptt_method == PTT_METHOD_GPIOD) {
 	        const char *chip_name = audio_config_p->achan[ch].octrl[ot].out_gpio_name;
 	        int line_number = audio_config_p->achan[ch].octrl[ot].out_gpio_num;
-			audio_config_p->achan[ch].octrl[ot].gpio_num = gpio_common_open_line(chip_name, line_number, false);
+
+#if LIBGPIOD_VERSION_MAJOR >= 2
+	        audio_config_p->achan[ch].octrl[ot].gpio_num = gpio_common_open_line(chip_name, line_number, false);
 	        if (audio_config_p->achan[ch].octrl[ot].gpio_num == GPIO_COMMON_UNKNOWN) {
-                text_color_set(DW_COLOR_ERROR);
+#else
+	        int rc = gpiod_probe(chip_name, line_number);
+	        if (rc < 0) {
+#endif
+	          text_color_set(DW_COLOR_ERROR);
 		  //No, people won't notice the error message and be confused.  Just terminate.
 	          //dw_printf ("Disable PTT for channel %d\n", ch);
 	          //audio_config_p->achan[ch].octrl[ot].ptt_method = PTT_METHOD_NONE;
@@ -1371,7 +1419,13 @@ void ptt_set (int ot, int chan, int ptt_signal)
 	if (save_audio_config_p->achan[chan].octrl[ot].ptt_method == PTT_METHOD_GPIOD) {
 		const char *chip = save_audio_config_p->achan[chan].octrl[ot].out_gpio_name;
 		int line = save_audio_config_p->achan[chan].octrl[ot].out_gpio_num;
+
+
+#if LIBGPIOD_VERSION_MAJOR >= 2
 		int rc = gpio_common_set(save_audio_config_p->achan[chan].octrl[ot].gpio_num, ptt);
+#else
+		int rc = gpiod_ctxless_set_value(chip, line, ptt, false, "direwolf", NULL, NULL);
+#endif
 		if (ptt_debug_level >= 1) {
 			text_color_set(DW_COLOR_DEBUG);
 			dw_printf("PTT_METHOD_GPIOD chip: %s line: %d ptt: %d  rc: %d\n", chip, line, ptt, rc);
