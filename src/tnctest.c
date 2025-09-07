@@ -1247,7 +1247,7 @@ static void tnc_send_data (int from, int to, char * data)
 
 	  cmd.hdr.datakind = 'D';
 	  cmd.hdr.pid = 0xf0;
-	  strlcpy (cmd.hdr.call_from, tnc_address[from]. sizeof(cmd.hdr.call_from));
+	  strlcpy (cmd.hdr.call_from, tnc_address[from], sizeof(cmd.hdr.call_from));
 	  strlcpy (cmd.hdr.call_to, tnc_address[to], sizeof(cmd.hdr.call_to));
 	  cmd.hdr.data_len = strlen(data);
 	  strlcpy (cmd.data, data, sizeof(cmd.data));
