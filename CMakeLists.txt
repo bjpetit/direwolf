@@ -20,7 +20,8 @@ option(OPTIONAL_TEST "Compile optional test (might be broken)" OFF)
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake/modules)
 
 # fix c standard used on the project
-set(CMAKE_C_STANDARD 99)
+# No, specifying c99 prevented cpp 15 (c23) from pointing out an error.
+# removed for release 1.8 # set(CMAKE_C_STANDARD 99)
 
 # Set additional project information
 set(COMPANY "wb2osz")
@@ -28,7 +29,7 @@ add_definitions("-DCOMPANY=\"${COMPANY}\"")
 set(APPLICATION_NAME "Dire Wolf")
 add_definitions("-DAPPLICATION_NAME=\"${APPLICATION_NAME}\"")
 set(APPLICATION_MAINTAINER="John Langner, WB2OSZ")
-set(COPYRIGHT "Copyright (c) 2019 John Langner, WB2OSZ. All rights reserved.")
+set(COPYRIGHT "Copyright (c) 2011-2025 John Langner, WB2OSZ. All rights reserved.")
 add_definitions("-DCOPYRIGHT=\"${COPYRIGHT}\"")
 set(IDENTIFIER "com.${COMPANY}.${APPLICATION_NAME}")
 add_definitions("-DIDENTIFIER=\"${IDENTIFIER}\"")
