@@ -769,7 +769,7 @@ void ax25_link_init (struct misc_config_s *pconfig, int debug)
 
 static int next_stream_id = 0;
 
-static ax25_dlsm_t *get_link_handle (char addrs[AX25_MAX_ADDRS][AX25_MAX_ADDR_LEN], int num_addr, int chan, int client, int create)
+static ax25_dlsm_t *get_link_handle (char addrs[][AX25_MAX_ADDR_LEN], int num_addr, int chan, int client, int create)
 {
 
 	ax25_dlsm_t *p;
