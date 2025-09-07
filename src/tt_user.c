@@ -106,7 +106,7 @@ static struct tt_user_s {
 	char symbol;				/* 'A' for traditional.  */
 						/* Can be any symbol for extended objects. */
 
-	char digit_suffix[3+1];			/* Suffix abbreviation as 3 digits. */
+	char digit_suffix[8];			/* Suffix abbreviation as 3 digits. */
 
 	time_t last_heard;			/* Timestamp when last heard.  */
 						/* User information will be deleted at some */
@@ -435,7 +435,7 @@ static void digit_suffix (char *callsign, char *suffix)
 	char *t;
 
 
-	strlcpy (suffix, "000", 5);			// TODO: should have proper size
+	strlcpy (suffix, "000", 8);			// TODO: should have proper size
 	tt_text_to_two_key (callsign, 0, two_key);
 	for (t = two_key; *t != '\0'; t++) {
 	  if (isdigit(*t)) {

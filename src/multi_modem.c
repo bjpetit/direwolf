@@ -336,7 +336,7 @@ void multi_modem_process_rec_frame (int chan, int subchan, int slice, unsigned c
 	  // TODO: Use station callsign, rather than "AIS," so we know where it is coming from,
 	  // if it happens to get onto RF somehow.
 
-	  char monfmt[276];
+	  char monfmt[280];
 	  snprintf (monfmt, sizeof(monfmt), "AIS>%s%1d%1d,NOGATE:{%c%c%s", APP_TOCALL, MAJOR_VERSION, MINOR_VERSION, USER_DEF_USER_ID, USER_DEF_TYPE_AIS, nmea);
 	  pp = ax25_from_text (monfmt, 1);
 
