@@ -284,7 +284,7 @@ tocalls:
    vendor: J. Angelo Racoma DU2XXR/N2RAC
    model: APRSPH net bot based on Ioreth
    class: service
-   os: linux
+   os: Linux
    contact: info@aprsph.net
    features:
      - messaging
@@ -458,6 +458,13 @@ tocalls:
    model: APRSduino
    class: tracker
    os: embedded
+
+ - tocall: APDP25
+   vendor: vk44.net
+   model: Project 25 (P25)
+   class: tracker
+   os: embedded
+   contact: support@vk44.net
 
  - tocall: APDPRS
    vendor: unknown
@@ -1351,6 +1358,13 @@ tocalls:
    features:
      - messaging
 
+ - tocall: APPRJ?
+   vendor: Custom Digital Services, LLC
+   model: "Traveler's ptFlex and ptSolar trackers"
+   class: tracker
+   os: embedded
+   contact: zack@custom-ds.com
+
  - tocall: APPS??
    vendor: Øyvind, LA7ECA (for the Norwegian Radio Relay League)
    model: Polaric Server
@@ -1483,13 +1497,31 @@ tocalls:
    class: app
    os: ipad
 
+ - tocall: APRPI?
+   vendor: TA2KVC
+   model: Raspberry Pi APRS / Pico W APRS
+   class: tracker
+   contact: volkancevik@live.com
+
+ - tocall: APRPJH
+   vendor: Piju, 9M2PJU
+   model: 9M2PJU APRS Heat Bot
+   class: service
+   contact: 9m2pju@hamradio.my
+
  - tocall: APRPJU
-   vendor: Piju 9M2PJU
-   model: 9M2PJU Bot
+   vendor: Piju, 9M2PJU
+   model: 9M2PJU APRS Bot
    class: daemon
    contact: 9m2pju@hamradio.my
    features:
      - messaging
+
+ - tocall: APRPJW
+   vendor: Piju, 9M2PJU
+   model: 9M2PJU APRS WX Bot
+   class: service
+   contact: 9m2pju@hamradio.my
 
  - tocall: APRPR?
    vendor: Robert DM4RW, Peter DL6MAA
@@ -1683,7 +1715,7 @@ tocalls:
    contact: harihend1973@gmail.com
    vendor: YD0BCX
    class: service
-   os: linux/unix
+   os: Linux/Unix
    features:
      - messaging
 
@@ -1691,6 +1723,12 @@ tocalls:
    vendor: W9JAJ
    model: ATTiny APRS Tracker
    os: embedded
+
+ - tocall: APTKVB
+   vendor: IT9KVB
+   model: Python APRS QTH and Weather-Station
+   class: daemon
+   contact: it9kvb@gmail.com
 
  - tocall: APTLVC
    vendor: TA5LVC
@@ -1721,6 +1759,14 @@ tocalls:
    vendor: Byonics
    model: TinyTrak
    class: tracker
+
+ - tocall: APTUR?
+   vendor: aprs.ai, TA7HBK
+   model: "Türkiye'nin APRS Uygulaması"
+   class: app
+   contact: 73@aprs.ai
+   features:
+     - messaging
 
  - tocall: APTW??
    vendor: Byonics
@@ -1782,6 +1828,13 @@ tocalls:
    model: WeeWX Weather Software
    class: software
    os: Linux/Unix
+
+ - tocall: APWHE?
+   vendor: KF6UFO
+   model: WX-Helios
+   class: wx
+   os: Linux
+   contact: https://github.com/kf6ufo/kf6ufo-wx-helios
 
  - tocall: APWM??
    vendor: KJ4ERJ
