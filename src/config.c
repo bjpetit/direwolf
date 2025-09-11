@@ -975,26 +975,27 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	if (realpath (fname, absfilepath) != NULL) {
 #endif
           fp = fopen (absfilepath, "r");
-	  if (fp == NULL) {		// Failed.  Next, try home dir
-	    strlcpy (absfilepath, "", sizeof(absfilepath));
+	}
+
+	if (fp == NULL) {		// Failed.  Next, try home dir
+	  strlcpy (absfilepath, "", sizeof(absfilepath));
 #ifdef __WIN32__
-	    char *h = getenv("USERPROFILE");
-	    if (h != NULL && fname[0] != '\\' && fname[1] != ':') {
-	      strlcat (absfilepath, h, sizeof(absfilepath));
-	      strlcat (absfilepath, "\\", sizeof(absfilepath));
-	    }
+	  char *h = getenv("USERPROFILE");
+	  if (h != NULL && fname[0] != '\\' && fname[1] != ':') {
+	    strlcat (absfilepath, h, sizeof(absfilepath));
+	    strlcat (absfilepath, "\\", sizeof(absfilepath));
+	  }
 #else
-	    // Don't prepend home dir if absolute path given.
-	    char *h = getenv("HOME");
-	    if (h != NULL && fname[0] != '/') {
-	      strlcat (absfilepath, h, sizeof(absfilepath));
-	      strlcat (absfilepath, "/", sizeof(absfilepath));
-	    }
+	  // Don't prepend home dir if absolute path given.
+	  char *h = getenv("HOME");
+	  if (h != NULL && fname[0] != '/') {
+	    strlcat (absfilepath, h, sizeof(absfilepath));
+	    strlcat (absfilepath, "/", sizeof(absfilepath));
+	  }
 #endif
             strlcat (absfilepath, fname, sizeof(absfilepath));
 
-	    fp = fopen (absfilepath, "r");
-	  } 
+	  fp = fopen (absfilepath, "r");
 	}
 
 	if (fp == NULL)	{
