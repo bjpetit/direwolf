@@ -4623,13 +4623,25 @@ void config_init (char *fname, struct audio_s *p_audio_config,
  * IGSERVER  hostname [ port ] 				-- original implementation.
  *
  * IGSERVER  hostname:port				-- more in line with usual conventions.
+ *
+ * Beginning in version 1.8 we will also recognize CWOPSERVER.
+ * The only difference, in this file, is that we set cwop_mode.
+ * Of course the IGate code acts quite differently.
  */
 
-	  else if (strcasecmp(t, "IGSERVER") == 0) {
+	  else if (strcasecmp(t, "IGSERVER") == 0 || strcasecmp(t, "CWOPSERVER") == 0) {
+	    if (strcasecmp(t, "CWOPSERVER") == 0) {
+	      p_igate_config->cwop_mode = 1;
+	    }
 	    t = split(NULL,0);
 	    if (t == NULL) {
 	      text_color_set(DW_COLOR_ERROR);
 	      dw_printf ("Line %d: Missing IGate server name for IGSERVER command.\n", line);
+	      continue;
+	    }
+	    if (strlen(p_igate_config->t2_server_name) > 0) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: Only one of IGSERVER and CWOPSERVER can be specified.\n", line);
 	      continue;
 	    }
 	    strlcpy (p_igate_config->t2_server_name, t, sizeof(p_igate_config->t2_server_name));
@@ -4877,7 +4889,7 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 
 	  else if (strcasecmp(t, "SATGATE") == 0) {
 
-	    text_color_set(DW_COLOR_INFO);
+	    text_color_set(DW_COLOR_ERROR);
 	    dw_printf ("Line %d: SATGATE is pretty useless and will be removed in a future version.\n", line);
 
 	    t = split(NULL,0);

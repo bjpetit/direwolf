@@ -30,6 +30,8 @@ struct igate_config_s {
 
 	int t2_server_port;		/* Typically 14580. */
 
+	int cwop_mode;			/* Read from multiple servers rather than normal IGate. */
+
 	char t2_login[AX25_MAX_ADDR_LEN];/* e.g. WA9XYZ-15 */
 					/* Note that the ssid could be any two alphanumeric */
 					/* characters not just 1 thru 15. */
