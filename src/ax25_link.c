@@ -1,7 +1,7 @@
 //
 //    This file is part of Dire Wolf, an amateur radio packet TNC.
 //
-//    Copyright (C) 2016, 2017, 2018, 2023, 2024  John Langner, WB2OSZ
+//    Copyright (C) 2016, 2017, 2018, 2023, 2024, 2025  John Langner, WB2OSZ
 //
 //    This program is free software: you can redistribute it and/or modify
 //    it under the terms of the GNU General Public License as published by
@@ -599,6 +599,8 @@ static int AX25MODULO(int n, int m, const char *file, const char *func, int line
 // TODO: add SELECT_T1_VALUE	for debugging.
 
 
+static void dl_connection_cleanup (ax25_dlsm_t *S);
+static void dl_connection_terminated (ax25_dlsm_t *S);
 static void dl_data_indication (ax25_dlsm_t *S, int pid, char *data, int len);
 
 static void i_frame (ax25_dlsm_t *S, cmdres_t cr, int p, int nr, int ns, int pid, char *info_ptr, int info_len);
@@ -1101,6 +1103,7 @@ void dl_disconnect_request (dlq_item_t *E)
 	    text_color_set(DW_COLOR_INFO);
 	    dw_printf ("Stream %d: Disconnected from %s.\n", S->stream_id, S->addrs[PEERCALL]);
 	    server_link_terminated (S->chan, S->client, S->addrs[PEERCALL], S->addrs[OWNCALL], 0);
+	    dl_connection_terminated (S);
 	    break;
 
 	  case 	state_1_awaiting_connection:
@@ -1129,6 +1132,7 @@ void dl_disconnect_request (dlq_item_t *E)
 	    STOP_T3;	// probably don't need.
 	    enter_new_state (S, state_0_disconnected, __func__, __LINE__);
 	    server_link_terminated (S->chan, S->client, S->addrs[PEERCALL], S->addrs[OWNCALL], 0);
+	    dl_connection_terminated (S);
 	    break;
 
 	  case 	state_2_awaiting_release:
@@ -1159,6 +1163,7 @@ void dl_disconnect_request (dlq_item_t *E)
 
 	      STOP_T1;
 	      enter_new_state (S, state_0_disconnected, __func__, __LINE__);
+	      dl_connection_terminated (S);
 	    }
 	    break;
 
@@ -1744,6 +1749,133 @@ void dl_outstanding_frames_request (dlq_item_t *E)
 
 /*------------------------------------------------------------------------------
  *
+ * Name:	dl_connection_cleanup
+ *
+ * Purpose:	Clean out a specific state machine and its references, freeing
+ *              associated memory.
+ *
+ * Inputs:	S	- Data Link State Machine.
+ *
+ * Description:	Clean out a specific state machine and anything related to it.
+ *              Free the associated memory.
+ *
+ *------------------------------------------------------------------------------*/
+
+static void dl_connection_cleanup (ax25_dlsm_t *S)
+{
+	int n;
+
+	if (s_debug_stats) {
+	  text_color_set(DW_COLOR_INFO);
+	  dw_printf ("%d  I frames received\n",    S->count_recv_frame_type[frame_type_I]);
+
+	  dw_printf ("%d  RR frames received\n",   S->count_recv_frame_type[frame_type_S_RR]);
+	  dw_printf ("%d  RNR frames received\n",  S->count_recv_frame_type[frame_type_S_RNR]);
+	  dw_printf ("%d  REJ frames received\n",  S->count_recv_frame_type[frame_type_S_REJ]);
+	  dw_printf ("%d  SREJ frames received\n", S->count_recv_frame_type[frame_type_S_SREJ]);
+
+	  dw_printf ("%d  SABME frames received\n", S->count_recv_frame_type[frame_type_U_SABME]);
+	  dw_printf ("%d  SABM frames received\n",  S->count_recv_frame_type[frame_type_U_SABM]);
+	  dw_printf ("%d  DISC frames received\n",  S->count_recv_frame_type[frame_type_U_DISC]);
+	  dw_printf ("%d  DM frames received\n",    S->count_recv_frame_type[frame_type_U_DM]);
+	  dw_printf ("%d  UA frames received\n",    S->count_recv_frame_type[frame_type_U_UA]);
+	  dw_printf ("%d  FRMR frames received\n",  S->count_recv_frame_type[frame_type_U_FRMR]);
+	  dw_printf ("%d  UI frames received\n",    S->count_recv_frame_type[frame_type_U_UI]);
+	  dw_printf ("%d  XID frames received\n",   S->count_recv_frame_type[frame_type_U_XID]);
+	  dw_printf ("%d  TEST frames received\n",  S->count_recv_frame_type[frame_type_U_TEST]);
+
+	  dw_printf ("%d  peak retry count\n",      S->peak_rc_value);
+	}
+
+	if (s_debug_client_app) {
+	  text_color_set(DW_COLOR_DEBUG);
+	  dw_printf ("dl_connection_cleanup: remove %s>%s\n", S->addrs[AX25_SOURCE], S->addrs[AX25_DESTINATION]);
+	}
+
+	discard_i_queue (S);
+
+	for (n = 0; n < 128; n++) {
+	  if (S->txdata_by_ns[n] != NULL) {
+	    cdata_delete (S->txdata_by_ns[n]);
+	    S->txdata_by_ns[n] = NULL;
+	  }
+	}
+
+	for (n = 0; n < 128; n++) {
+	  if (S->rxdata_by_ns[n] != NULL) {
+	    cdata_delete (S->rxdata_by_ns[n]);
+	    S->rxdata_by_ns[n] = NULL;
+	  }
+	}
+
+	if (S->ra_buff != NULL) {
+	  cdata_delete (S->ra_buff);
+	  S->ra_buff = NULL;
+	}
+
+	// Put into disconnected state.
+	// If "connected" indicator (e.g. LED) was on, this will turn it off.
+
+	enter_new_state (S, state_0_disconnected, __func__, __LINE__);
+
+	S->magic1 = 0;
+	S->magic2 = 0;
+	S->magic3 = 0;
+
+	free (S);
+
+} /* end dl_connection_cleanup */
+
+
+
+/*------------------------------------------------------------------------------
+ *
+ * Name:	dl_connection_terminated
+ *
+ * Purpose:	Connection has gone away.  Clean up any data associated with it.
+ *
+ * Inputs:	S	- Data Link State Machine.
+ *
+ * Description:	Clean out anything related to the specified connection, and
+ *              remove the associated state machine from the list.
+ *
+ *------------------------------------------------------------------------------*/
+
+static void dl_connection_terminated (ax25_dlsm_t *S)
+{
+	ax25_dlsm_t *dlentry;
+	ax25_dlsm_t *dlprev;
+
+	// Look for corruption or double freeing.
+
+	assert (S->magic1 == MAGIC1);
+	assert (S->magic2 == MAGIC2);
+	assert (S->magic3 == MAGIC3);
+
+	// Remove from the list.
+
+	dlprev = NULL;
+	dlentry = list_head;
+	while (dlentry != S) {
+	  dlprev = dlentry;
+	  dlentry = dlentry->next;
+	}
+	if (!dlprev) {
+	  list_head = dlentry->next;
+	} else {
+	  dlprev->next = dlentry->next;
+	}
+
+	// Clean up the connection.
+
+	dl_connection_cleanup(S);
+
+} /* end dl_connection_terminated */
+
+
+
+/*------------------------------------------------------------------------------
+ *
  * Name:	dl_client_cleanup
  * 
  * Purpose:	Client app has gone away.  Clean up any data associated with it.
@@ -1785,76 +1917,15 @@ void dl_client_cleanup (dlq_item_t *E)
 
 	  if (S->client == E->client ) {
 
-	    int n;
-
-	    if (s_debug_stats) {
-	      text_color_set(DW_COLOR_INFO);
-	      dw_printf ("%d  I frames received\n",    S->count_recv_frame_type[frame_type_I]);
-
-	      dw_printf ("%d  RR frames received\n",   S->count_recv_frame_type[frame_type_S_RR]);
-	      dw_printf ("%d  RNR frames received\n",  S->count_recv_frame_type[frame_type_S_RNR]);
-	      dw_printf ("%d  REJ frames received\n",  S->count_recv_frame_type[frame_type_S_REJ]);
-	      dw_printf ("%d  SREJ frames received\n", S->count_recv_frame_type[frame_type_S_SREJ]);
-
-	      dw_printf ("%d  SABME frames received\n", S->count_recv_frame_type[frame_type_U_SABME]);
-	      dw_printf ("%d  SABM frames received\n",  S->count_recv_frame_type[frame_type_U_SABM]);
-	      dw_printf ("%d  DISC frames received\n",  S->count_recv_frame_type[frame_type_U_DISC]);
-	      dw_printf ("%d  DM frames received\n",    S->count_recv_frame_type[frame_type_U_DM]);
-	      dw_printf ("%d  UA frames received\n",    S->count_recv_frame_type[frame_type_U_UA]);
-	      dw_printf ("%d  FRMR frames received\n",  S->count_recv_frame_type[frame_type_U_FRMR]);
-	      dw_printf ("%d  UI frames received\n",    S->count_recv_frame_type[frame_type_U_UI]);
-	      dw_printf ("%d  XID frames received\n",   S->count_recv_frame_type[frame_type_U_XID]);
-	      dw_printf ("%d  TEST frames received\n",  S->count_recv_frame_type[frame_type_U_TEST]);
-
-	      dw_printf ("%d  peak retry count\n",      S->peak_rc_value);
-	    }
-
-	    if (s_debug_client_app) {
-	      text_color_set(DW_COLOR_DEBUG);
-	      dw_printf ("dl_client_cleanup: remove %s>%s\n", S->addrs[AX25_SOURCE], S->addrs[AX25_DESTINATION]);
-	    }
-
-	    discard_i_queue (S);
-
-	    for (n = 0; n < 128; n++) {
-	      if (S->txdata_by_ns[n] != NULL) {
-	        cdata_delete (S->txdata_by_ns[n]);
-	        S->txdata_by_ns[n] = NULL;
-	      }
-	    }
-
-	    for (n = 0; n < 128; n++) {
-	      if (S->rxdata_by_ns[n] != NULL) {
-	        cdata_delete (S->rxdata_by_ns[n]);
-	        S->rxdata_by_ns[n] = NULL;
-	      }
-	    }
-
-	    if (S->ra_buff != NULL) {
-	      cdata_delete (S->ra_buff);
-	      S->ra_buff = NULL;
-	    }
-
-	    // Put into disconnected state.
-	    // If "connected" indicator (e.g. LED) was on, this will turn it off.
-
-	    enter_new_state (S, state_0_disconnected, __func__, __LINE__);
-
-	    // Take S out of list.
-
-	    S->magic1 = 0;
-	    S->magic2 = 0;
-	    S->magic3 = 0;
-
 	    if (S == list_head) {		// first one on list.
 
 	      list_head = S->next;
-	      free (S);
+	      dl_connection_cleanup (S);
 	      S = list_head;
 	    }
 	    else {				// not the first one.
 	      dlprev->next = S->next;
-	      free (S);
+	      dl_connection_cleanup (S);
 	      S = dlprev->next;
 	    }
 	  }
@@ -4504,6 +4575,7 @@ static void disc_frame (ax25_dlsm_t *S, int p)
 	      STOP_T1;
 	      STOP_T3;
 	      enter_new_state (S, state_0_disconnected, __func__, __LINE__);
+	      dl_connection_terminated (S);
 	    }
 	    break;
 	}
@@ -4591,6 +4663,7 @@ static void dm_frame (ax25_dlsm_t *S, int f)
 	      server_link_terminated (S->chan, S->client, S->addrs[PEERCALL], S->addrs[OWNCALL], 0);
 	      STOP_T1;
 	      enter_new_state (S, state_0_disconnected, __func__, __LINE__);
+	      dl_connection_terminated (S);
 	    }
 	    else {
 	      // keep current state.
@@ -4613,6 +4686,7 @@ static void dm_frame (ax25_dlsm_t *S, int f)
 	      server_link_terminated (S->chan, S->client, S->addrs[PEERCALL], S->addrs[OWNCALL], 0);
 	      STOP_T1;
 	      enter_new_state (S, state_0_disconnected, __func__, __LINE__);
+	      dl_connection_terminated (S);
 	    }
 	    else {
 	      // keep current state.
@@ -4634,6 +4708,7 @@ static void dm_frame (ax25_dlsm_t *S, int f)
 	    STOP_T1;
 	    STOP_T3;
 	    enter_new_state (S, state_0_disconnected, __func__, __LINE__);
+	    dl_connection_terminated (S);
 	    break;
 
 	  case 	state_5_awaiting_v22_connection:
@@ -4651,6 +4726,7 @@ static void dm_frame (ax25_dlsm_t *S, int f)
 	      server_link_terminated (S->chan, S->client, S->addrs[PEERCALL], S->addrs[OWNCALL], 0);
 	      STOP_T1;
 	      enter_new_state (S, state_0_disconnected, __func__, __LINE__);
+	      dl_connection_terminated (S);
 	    }
 	    else {
 	      // keep current state.
@@ -4858,6 +4934,7 @@ static void ua_frame (ax25_dlsm_t *S, int f)
 	      server_link_terminated (S->chan, S->client, S->addrs[PEERCALL], S->addrs[OWNCALL], 0);
 	      STOP_T1;
 	      enter_new_state (S, state_0_disconnected, __func__, __LINE__);
+	      dl_connection_terminated (S);
 	    }
 	    else {
 	      if (s_debug_protocol_errors) {
@@ -5374,6 +5451,7 @@ static void t1_expiry (ax25_dlsm_t *S)
 	      dw_printf ("Failed to connect to %s after %d tries.\n", S->addrs[PEERCALL], S->n2_retry);
 	      server_link_terminated (S->chan, S->client, S->addrs[PEERCALL], S->addrs[OWNCALL], 1);
 	      enter_new_state (S, state_0_disconnected, __func__, __LINE__);
+	      dl_connection_terminated (S);
 	    }
 	    else {
 	      cmdres_t cmd = cr_cmd;
@@ -5400,6 +5478,7 @@ static void t1_expiry (ax25_dlsm_t *S)
 	      dw_printf ("Stream %d: Disconnected from %s.\n", S->stream_id, S->addrs[PEERCALL]);
 	      server_link_terminated (S->chan, S->client, S->addrs[PEERCALL], S->addrs[OWNCALL], 0);
 	      enter_new_state (S, state_0_disconnected, __func__, __LINE__);
+	      dl_connection_terminated (S);
 	    }
 	    else {
 	      cmdres_t cmd = cr_cmd;
@@ -5473,6 +5552,7 @@ static void t1_expiry (ax25_dlsm_t *S)
 	      lm_data_request (S->chan, TQ_PRIO_1_LO, pp);
 
 	      enter_new_state (S, state_0_disconnected, __func__, __LINE__);
+	      dl_connection_terminated (S);
 	    }
 	    else {
 	      SET_RC(S->rc+1);
