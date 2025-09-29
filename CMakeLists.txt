@@ -15,6 +15,7 @@ option(FORCE_SSSE3 "Compile with SSSE3 instruction only" OFF)
 option(FORCE_SSE41 "Compile with SSE4.1 instruction only" OFF)
 option(OPTIONAL_TEST "Compile optional test (might be broken)" OFF)
 # UNITTEST option must be after CMAKE_BUILT_TYPE
+option(OPTIONAL_DNSSD "Include support for DNS-SD" ON)
 
 # where cmake find custom modules
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake/modules)
@@ -163,9 +164,11 @@ elseif(APPLE)
   set(CMAKE_MACOSX_RPATH ON)
   message(STATUS "RPATH support: ${CMAKE_MACOSX_RPATH}")
 
-  # just blindly enable dns-sd
-  set(USE_MACOS_DNSSD ON)
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUSE_MACOS_DNSSD")
+  # optionally enable dns-sd
+  if(OPTIONAL_DNSSD)
+    set(USE_MACOS_DNSSD ON)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUSE_MACOS_DNSSD")
+  endif()
 
 elseif (WIN32)
   if(C_MSVC)
@@ -365,9 +368,11 @@ if(LINUX)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUSE_CM108")
   endif()
 
-  find_package(Avahi)
-  if(AVAHI_CLIENT_FOUND)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUSE_AVAHI_CLIENT")
+  if(OPTIONAL_DNSSD)
+    find_package(Avahi)
+    if(AVAHI_CLIENT_FOUND)
+      set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUSE_AVAHI_CLIENT")
+    endif()
   endif()
 
 elseif (HAVE_SNDIO)
