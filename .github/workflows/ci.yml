@@ -33,17 +33,23 @@ jobs:
               build_type: 'Release',
               cmake_extra_flags: '-G "MinGW Makefiles"'
             }
-          - {
-              name: 'Windows 2022 MinGW 32bit',
-              os: windows-2022,
-              cc: 'i686-w64-mingw32-gcc',
-              cxx: 'i686-w64-mingw32-g++',
-              ar: 'i686-w64-mingw32-ar',
-              windres: 'i686-w64-mingw32-windres',
-              arch: 'i686',
-              build_type: 'Release',
-              cmake_extra_flags: '-G "MinGW Makefiles"'
-            }
+# It seems that the MinGW 32 bit target is no longer supported
+# for the github runner.  There might be a work-around, but for
+# now, disable it so we don't get the annoying failure message.
+# https://www.msys2.org/docs/windows_support/
+# https://github.com/marketplace/actions/install-mingw
+# 
+#          - {
+#              name: 'Windows 2022 MinGW 32bit',
+#              os: windows-2022,
+#              cc: 'i686-w64-mingw32-gcc',
+#              cxx: 'i686-w64-mingw32-g++',
+#              ar: 'i686-w64-mingw32-ar',
+#              windres: 'i686-w64-mingw32-windres',
+#              arch: 'i686',
+#             build_type: 'Release',
+#              cmake_extra_flags: '-G "MinGW Makefiles"'
+#            }
           - {
               name: 'macOS latest',
               os: macos-latest,
