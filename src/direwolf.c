@@ -1137,7 +1137,7 @@ int main (int argc, char *argv[])
 	kissnet_init (&misc_config);
 
 #if (USE_AVAHI_CLIENT|USE_MACOS_DNSSD)
-	if (misc_config.kiss_port > 0 && misc_config.dns_sd_enabled)
+	if (misc_config.kiss_port[0] > 0 && misc_config.dns_sd_enabled)
 	  dns_sd_announce(&misc_config);
 #endif
 
