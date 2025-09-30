@@ -321,7 +321,7 @@ int main(int argc, char **argv)
 						// FIXME: options should not be order dependent.
 
               if (strcasecmp(optarg, "EAS") == 0) {
-	        modem.achan[0].baud = 0xEA5EA5;	// See special case below.
+	        modem.achan[0].baud = BAUD_SENTINEL_EAS;	// See special case below.
 	      }
 	      else {
 	        modem.achan[0].baud = atoi(optarg);
@@ -338,7 +338,7 @@ int main(int argc, char **argv)
                   modem.achan[0].mark_freq = 1615;
                   modem.achan[0].space_freq = 1785;
 	      }
-	      else if (modem.achan[0].baud == 0xEA5EA5) {
+	      else if (modem.achan[0].baud == BAUD_SENTINEL_EAS) {
 		  modem.achan[0].baud = 521;			// Fine tuned later. 520.83333
 								// Proper fix is to make this float.
                   modem.achan[0].modem_type = MODEM_EAS;

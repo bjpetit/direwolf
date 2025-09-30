@@ -483,10 +483,10 @@ int main (int argc, char *argv[])
 						/* Also implies modem type based on speed. */
 						/* Special case "AIS" rather than number. */
 	    if (strcasecmp(optarg, "AIS") == 0) {
-	      B_opt = 12345;	// See special case below.
+	      B_opt = BAUD_SENTINEL_AIS;	// See special case below.
 	    }
 	    else if (strcasecmp(optarg, "EAS") == 0) {
-	      B_opt = 23456;	// See special case below.
+	      B_opt = BAUD_SENTINEL_EAS;	// See special case below.
 	    }
 	    else {
 	      B_opt = atoi(optarg);
@@ -843,13 +843,13 @@ int main (int argc, char *argv[])
 	      dw_printf ("Bit rate should be standard 4800 rather than specified %d.\n", audio_config.achan[0].baud);
 	    }
 	  }
-	  else if (audio_config.achan[0].baud == 12345) {
+	  else if (audio_config.achan[0].baud == BAUD_SENTINEL_AIS) {
 	    audio_config.achan[0].modem_type = MODEM_AIS;
 	    audio_config.achan[0].baud = 9600;
 	    audio_config.achan[0].mark_freq = 0;
 	    audio_config.achan[0].space_freq = 0;
 	  }
-	  else if (audio_config.achan[0].baud == 23456) {
+	  else if (audio_config.achan[0].baud == BAUD_SENTINEL_EAS) {
 	    audio_config.achan[0].modem_type = MODEM_EAS;
 	    audio_config.achan[0].baud = 521;	// Actually 520.83 but we have an integer field here.
 						// Will make more precise in afsk demod init.

@@ -32,6 +32,11 @@
 #define _WIN32_WINNT 0x0501     /* Minimum OS version is XP. */
 #define WINVER       0x0501     /* Minimum OS version is XP. */
 
+// Other values are in Windows SDK sdkddkver.h
+//	0x0600 - Windows Vista
+//	0x0601 - Windows 7
+//	0x0A00 - Windows 10
+
 #include <winsock2.h>
 #include <windows.h>
 

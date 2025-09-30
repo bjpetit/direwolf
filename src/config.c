@@ -1465,17 +1465,17 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	      continue;
 	    }
 	    if (strcasecmp(t,"AIS") == 0) {
-	      n = MAX_BAUD-1;	// Hack - See special case later.
+	      n = BAUD_SENTINEL_AIS;	// Hack - See special case later.
 	    }
 	    else if (strcasecmp(t,"EAS") == 0) {
-	      n = MAX_BAUD-2;	// Hack - See special case later.
+	      n = BAUD_SENTINEL_EAS;	// Hack - See special case later.
 	    }
 	    else {
 	      n = atoi(t);
 	    }
             if (n >= MIN_BAUD && n <= MAX_BAUD) {
 	      p_audio_config->achan[channel].baud = n;
-	      if (n != 300 && n != 1200 && n != 2400 && n != 4800 && n != 9600 && n != 19200 && n != MAX_BAUD-1 && n != MAX_BAUD-2) {
+	      if (n != 300 && n != 1200 && n != 2400 && n != 4800 && n != 9600 && n != 19200 && n != BAUD_SENTINEL_AIS && n != BAUD_SENTINEL_EAS) {
 	        text_color_set(DW_COLOR_ERROR);
 	        dw_printf ("Line %d: Warning: Non-standard data rate of %d bits per second.  Are you sure?\n", line, n);
     	      }
@@ -1514,21 +1514,22 @@ void config_init (char *fname, struct audio_s *p_audio_config,
               p_audio_config->achan[channel].mark_freq = 0;
               p_audio_config->achan[channel].space_freq = 0;
 	    }
-	    else if (p_audio_config->achan[channel].baud == MAX_BAUD-1) {
+	    else if (p_audio_config->achan[channel].baud == BAUD_SENTINEL_AIS) {
               p_audio_config->achan[channel].modem_type = MODEM_AIS;
+	      p_audio_config->achan[channel].baud = 9600;
               p_audio_config->achan[channel].mark_freq = 0;
               p_audio_config->achan[channel].space_freq = 0;
 	    }
-	    else if (p_audio_config->achan[channel].baud == MAX_BAUD-2) {
+	    else if (p_audio_config->achan[channel].baud == BAUD_SENTINEL_EAS) {
 	      p_audio_config->achan[channel].modem_type = MODEM_EAS;
 	      p_audio_config->achan[channel].baud = 521;	// Actually 520.83 but we have an integer field here.
 								// Will make more precise in afsk demod init.
 	      p_audio_config->achan[channel].mark_freq = 2083;	// Actually 2083.3 - logic 1.
 	      p_audio_config->achan[channel].space_freq = 1563;	// Actually 1562.5 - logic 0.
-	      // ? strlcpy (p_audio_config->achan[channel].profiles, "A", sizeof(p_audio_config->achan[channel].profiles));
+	      strlcpy (p_audio_config->achan[channel].profiles, "A", sizeof(p_audio_config->achan[channel].profiles));
 	    }
 	    else {
-              p_audio_config->achan[channel].modem_type = MODEM_SCRAMBLE;
+              p_audio_config->achan[channel].modem_type = MODEM_SCRAMBLE;	// Commonly knowa as G3RUH.
               p_audio_config->achan[channel].mark_freq = 0;
               p_audio_config->achan[channel].space_freq = 0;
 	    }

@@ -479,6 +479,16 @@ struct audio_s {
 //#define MAX_BAUD		10000
 #define MAX_BAUD		40000		// Anyone want to try 38.4 k baud?
 
+// When command line -B or config file MODEM has AIS or EAS,
+// we store a special reserved value at that point and select
+// the proper mode and actual speed later.
+// It should probably be outside the min-max range but we would
+// have more checking and testing to do.
+
+#define BAUD_SENTINEL_AIS (MAX_BAUD-1)
+#define BAUD_SENTINEL_EAS (MAX_BAUD-2)
+
+
 /*
  * Typical transmit timings for VHF.
  */

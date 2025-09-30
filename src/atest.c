@@ -278,10 +278,10 @@ int main (int argc, char *argv[])
 						/* Also implies modem type based on speed. */
 						/* Special cases AIS, EAS rather than number. */
 	      if (strcasecmp(optarg, "AIS") == 0) {
-	        B_opt = 0xA15A15;	// See special case below.
+	        B_opt = BAUD_SENTINEL_AIS;	// See special case below.
 	      }
 	      else if (strcasecmp(optarg, "EAS") == 0) {
-	        B_opt = 0xEA5EA5;	// See special case below.
+	        B_opt = BAUD_SENTINEL_EAS;	// See special case below.
 	      }
 	      else {
 	        B_opt = atoi(optarg);
@@ -458,14 +458,14 @@ int main (int argc, char *argv[])
 	  my_audio_config.achan[0].space_freq = 0;
 	  strlcpy (my_audio_config.achan[0].profiles, "", sizeof(my_audio_config.achan[0].profiles));
 	}
-	else if (my_audio_config.achan[0].baud == 0xA15A15) {	// Hack for different use of 9600
+	else if (my_audio_config.achan[0].baud == BAUD_SENTINEL_AIS) {	// Hack for different use of 9600
 	  my_audio_config.achan[0].modem_type = MODEM_AIS;
 	  my_audio_config.achan[0].baud = 9600;
 	  my_audio_config.achan[0].mark_freq = 0;
 	  my_audio_config.achan[0].space_freq = 0;
 	  strlcpy (my_audio_config.achan[0].profiles, " ", sizeof(my_audio_config.achan[0].profiles));	// avoid getting default later.
 	}
-	else if (my_audio_config.achan[0].baud == 0xEA5EA5) {
+	else if (my_audio_config.achan[0].baud == BAUD_SENTINEL_EAS) {
 	  my_audio_config.achan[0].modem_type = MODEM_EAS;
 	  my_audio_config.achan[0].baud = 521;	// Actually 520.83 but we have an integer field here.
 						// Will make more precise in afsk demod init.
