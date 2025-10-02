@@ -1436,6 +1436,10 @@ static void send_packet_to_server (packet_t pp, int chan)
 
 /* 
  * Finally, append ",qAR," and my call to the path.
+ *
+ * According to Pete, "A" stands for APRS.
+ * Original plan was to allow mixing of different types
+ * of data, e.g. qFX for firenet.
  */
 
 /*

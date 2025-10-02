@@ -483,7 +483,7 @@ struct audio_s {
 // we store a special reserved value at that point and select
 // the proper mode and actual speed later.
 // It should probably be outside the min-max range but we would
-// have more checking and testing to do.
+// have more checking and testing to do for the range checks.
 
 #define BAUD_SENTINEL_AIS (MAX_BAUD-1)
 #define BAUD_SENTINEL_EAS (MAX_BAUD-2)
