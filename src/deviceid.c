@@ -524,42 +524,52 @@ static int mice_cmp (const void *px, const void *py)
  *		AX.25 destination field.   The form should be APxxxx.
  *
  *		Search the list looking for the maximum length match.
- *		For example, 
- *			APXR	= Xrouter
- *			APX	= Xastir
+ *
+ *		tocalls was sorted by decreasing length so the search will go from
+ *		most specific to least specific.
+ *		Example:  APY350 or APY008 would match those specific models before
+ *		getting to the more generic APY.
  *
  *------------------------------------------------------------------*/
 
 void deviceid_decode_dest (char *dest, char *device, size_t device_size)
 {
-	strlcpy (device, "UNKNOWN vendor/model", device_size);
-
 	if (ptocalls == NULL) {
 	  text_color_set(DW_COLOR_ERROR);
 	  dw_printf("deviceid_decode_dest called without any deviceid data.\n");
+	  strlcpy (device, "Internal error - UNKNOWN vendor/model", device_size);
 	  return;
 	}
+
+	*device = '\0';
 
 	for (int n = 0; n < tocalls_count; n++) {
 	  if (strncmp(dest, ptocalls[n].tocall, strlen(ptocalls[n].tocall)) == 0) {
 
-	    if (ptocalls[n].vendor != NULL) {
+	    if (ptocalls[n].vendor != NULL && ptocalls[n].model != NULL) {	// both vendor & model
+	      snprintf (device, device_size, "%s %s", ptocalls[n].vendor, ptocalls[n].model);
+	    }
+
+	    else if (ptocalls[n].vendor != NULL) {	// only vendor
 	      strlcpy (device, ptocalls[n].vendor, device_size);
 	    }
 
-	    if (ptocalls[n].vendor != NULL && ptocalls[n].model != NULL) {
-	      strlcat (device, " ", device_size);
+	    else if (ptocalls[n].model != NULL) {	// only model
+	      strlcpy (device, ptocalls[n].model, device_size);
 	    }
 
-	    if (ptocalls[n].model != NULL) {
-	      strlcat (device, ptocalls[n].model, device_size);
+	    else {	// found in table but no vendor or model
+	      break;
 	    }
+
 	    return;
 	  }
 	}
 
-// Not found in table.
+// Not found in table.  Or found but both vendor and model are missing.
+
 	strlcpy (device, "UNKNOWN vendor/model", device_size);
+	return;
 
 } // end deviceid_decode_dest
 
