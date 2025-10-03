@@ -243,4 +243,4 @@ Here are some good places to ask questions and share your experience:
 
 The github "issues" section is for reporting software defects and enhancement requests.  It is NOT a place to ask questions or have general discussions.  Please use one of the locations above.
 
-[![Star History Chart](https://api.star-history.com/svg?repos=hkociemba/RubiksCube-TwophaseSolver&type=Date)](https://star-history.com/#wb2osz/direwolf&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=wb2osz/direwolf&type=Date)](https://star-history.com/#wb2osz/direwolf&Date)
