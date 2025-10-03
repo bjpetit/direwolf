@@ -110,6 +110,8 @@ It can also be used as a virtual TNC for other applications such as [APRSIS32](h
 
 Youtube has many interesting and helpful videos.  Searching for [direwolf tnc](https://www.youtube.com/results?search_query=direwolf+tnc) or [direwolf aprs](https://www.youtube.com/results?search_query=direwolf+aprs)  will produce the most relevant results. 
 
+**All APRS users should read this:**   [Understanding APRS Packets]( https://github.com/wb2osz/aprsspec/raw/main/Understanding-APRS-Packets.pdf)
+
 ## Installation
 
 ### Windows
@@ -135,6 +137,8 @@ On Debian / Ubuntu / Raspbian / Raspberry Pi OS:
     sudo apt-get install libasound2-dev
     sudo apt-get install libudev-dev
     sudo apt-get install libavahi-client-dev
+    # This is only needed to use the GPIO pins for PTT:
+    sudo apt-get install libgpiod-dev
 
 Or on Red Hat / Fedora / CentOS:
 

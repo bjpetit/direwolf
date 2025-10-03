@@ -1,20 +1,26 @@
 # Revision History
 
-## Version 1.8  --  Development Version
+## Version 1.8  --  October 2025
 
-### New Features:
+### New Documentation:
+
+- All APRS users should read [Understanding APRS Packets](https://github.com/wb2osz/aprsspec/raw/main/Understanding-APRS-Packets.pdf).  Be sure to read the section on common mistakes or you might be used as an example of what not to do.
+
+## New Features:
+
+- Added support for libgpiod version 2.  This is needed for GPIO PTT on [Raspberry Pi OS 13 trixie](https://www.raspberrypi.com/news/trixie-the-new-version-of-raspberry-pi-os/).  You will need to install libgpiod-dev before building.
 
 - Support for CM108 PTT on Mac.
 
-- New NCHANNEL feature to map a channel number to an external network TCP KISS TNC.  See xxx for example of a bridge to LoRa APRS.  See [APRS-LoRa-VHF-APRS-Bridge.pdf](https://github.com/wb2osz/direwolf-doc/blob/main/APRS-LoRa-VHF-APRS-Bridge.pdf) for explanation.
+- New NCHANNEL feature to map a channel number to an external network TCP KISS TNC.    See [APRS-LoRa-VHF-APRS-Bridge.pdf](https://raw.githubusercontent.com/wb2osz/direwolf-doc/main/APRS-LoRa-VHF-APRS-Bridge.pdf) for explanation and example.
 
-- [http://www.aprs.org/aprs11/tocalls.txt](http://www.aprs.org/aprs11/tocalls.txt) has been abandoned since the end of 2021.  [https://github.com/aprsorg/aprs-deviceid](https://github.com/aprsorg/aprs-deviceid) is now considered to be the authoritative source of truth for the vendor/model encoding.
+- [http://www.aprs.org/aprs11/tocalls.txt](http://www.aprs.org/aprs11/tocalls.txt) has been abandoned since the end of 2021.  [https://github.com/aprsorg/aprs-deviceid](https://github.com/aprsorg/aprs-deviceid) is now the authoritative source of truth for the vendor/model encoding.
 
 - New direwolf icon.
 
-- Include the direwolf icon in the Windows executable.  Note:  When building from source, environment variable RC must point to windres location.
+- New direwolf icon is now embedded in the Windows executable.  Note:  When building from source, environment variable RC must point to windres location.
 
-- Added support for libgpiod version 2.
+- Enhanced IGate functionality to allow downloading from all [CWOP](https://raw.githubusercontent.com/wb2osz/direwolf-doc/main/CWOP.pdf) servers concurrently.
 
 ## Version 1.7  --  October 2023
 
