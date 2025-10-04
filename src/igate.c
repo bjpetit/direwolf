@@ -174,7 +174,7 @@ static struct s_server {
 
 } is_server[MAX_IS_HOSTS];
 
-int num_is_servers = 0;		// Number of element used above for CWOP mode.
+static int num_is_servers = 0;	// Number of elements used above for CWOP mode.
 				// Should be 1 for normal ham APRS-IS.
 
 
@@ -371,6 +371,7 @@ int igate_get_dnl_cnt (void) {
  *				  1  plus packets sent TO server or why not.
  *				  2  plus duplicate detection overview.
  *				  3  plus duplicate detection details.
+ *				  4  plus DNS details.
  *
  * Description:	Originally: This starts two threads:
  *
@@ -572,21 +573,20 @@ static void setup_cwop_connect_threads(void)
 	  freeaddrinfo(ai_head);
 	}
 
-#if DEBUG_DNS
-	text_color_set(DW_COLOR_DEBUG);
-	dw_printf ("cwop getaddrinfo returns:\n");
-#endif
+	if (s_debug >= 4) {
+	  text_color_set(DW_COLOR_DEBUG);
+	  dw_printf ("cwop getaddrinfo returns:\n");
+	}
 	num_is_servers = 0;
 	for (ai = ai_head; ai != NULL; ai = ai->ai_next) {
-#if DEBUG_DNS
-	  text_color_set(DW_COLOR_DEBUG);
 	  dwsock_ia_to_text (ai->ai_family, ai->ai_addr, 
 				is_server[num_is_servers].ipaddr_str,
 				sizeof(is_server[num_is_servers].ipaddr_str));
 	  strlcpy (is_server[num_is_servers].server_port_str, server_port_str,
 				sizeof(is_server[num_is_servers].server_port_str));
-	  dw_printf ("    %s\n", is_server[num_is_servers].ipaddr_str);
-#endif
+	  if (s_debug >= 4) {
+	    dw_printf ("    [%d] %s\n", num_is_servers, is_server[num_is_servers].ipaddr_str);
+	  }
 
 	  // Don't run off end if too many.
 	  if (num_is_servers < MAX_IS_HOSTS) num_is_servers++;
@@ -757,17 +757,17 @@ static void * connnect_thread_aprs (void *arg)
 	      continue;
 	    }
 
-#if DEBUG_DNS
-	    text_color_set(DW_COLOR_DEBUG);
-	    dw_printf ("getaddrinfo returns:\n");
-#endif
+	    if (s_debug >= 4) {
+	      text_color_set(DW_COLOR_DEBUG);
+	      dw_printf ("getaddrinfo returns:\n");
+	    }
 	    num_hosts = 0;
 	    for (ai = ai_head; ai != NULL; ai = ai->ai_next) {
-#if DEBUG_DNS
-	      text_color_set(DW_COLOR_DEBUG);
-	      dwsock_ia_to_text (ai->ai_family, ai->ai_addr, ipaddr_str, sizeof(ipaddr_str));
-	      dw_printf ("    %s\n", ipaddr_str);
-#endif
+	      if (s_debug >= 4) {
+	        text_color_set(DW_COLOR_DEBUG);
+	        dwsock_ia_to_text (ai->ai_family, ai->ai_addr, ipaddr_str, sizeof(ipaddr_str));
+	        dw_printf ("    [%d] %s\n", num_hosts, ipaddr_str);
+	      }
 	      hosts[num_hosts] = ai;
 	      if (num_hosts < MAX_IS_HOSTS) num_hosts++;
 	    }
@@ -780,14 +780,14 @@ static void * connnect_thread_aprs (void *arg)
 
 	    shuffle (hosts, num_hosts);
 
-#if DEBUG_DNS
-	    text_color_set(DW_COLOR_DEBUG);
-	    dw_printf ("after shuffling:\n");
-	    for (n=0; n<num_hosts; n++) {
-	      dwsock_ia_to_text (hosts[n]->ai_family, hosts[n]->ai_addr, ipaddr_str, sizeof(ipaddr_str));
-	      dw_printf ("    %s\n", ipaddr_str);
+	    if (s_debug >= 4) {
+	      text_color_set(DW_COLOR_DEBUG);
+	      dw_printf ("after shuffling:\n");
+	      for (n=0; n<num_hosts; n++) {
+	        dwsock_ia_to_text (hosts[n]->ai_family, hosts[n]->ai_addr, ipaddr_str, sizeof(ipaddr_str));
+	        dw_printf ("    [%d] %s\n", n, ipaddr_str);
+	      }
 	    }
-#endif
 
 	    // Try each address until we find one that is successful.
 
@@ -822,7 +822,8 @@ static void * connnect_thread_aprs (void *arg)
 	      }
 #endif
 
-#ifndef DEBUG_DNS 
+//#ifndef DEBUG_DNS
+#if 1
 	      err = connect(is, ai->ai_addr, (int)ai->ai_addrlen);
 #if __WIN32__
 	      if (err == SOCKET_ERROR) {
@@ -1670,7 +1671,7 @@ static int get1ch (int my_server_index)
 
 	  n = SOCK_RECV (is_server[my_server_index].igate_sock, (char*)(&ch), 1);
 
-	  if (n == 1) {
+	  if (n == 1) {		// Success
 #if DEBUG9
 	    dw_printf (log_fp, "%02x %c %c", ch, 
 			isprint(ch) ? ch : '.' , 
@@ -1682,8 +1683,19 @@ static int get1ch (int my_server_index)
 	    return(ch);	
 	  }
 
+	  // Linux man page: "These calls return the number of bytes received, or -1 if an error occurred
+	  // The return value will be 0 when the peer has performed an orderly shutdown.
+
+	  // I saw 0 when two different clients were logged in with same callsign-ssid.
+
           text_color_set(DW_COLOR_ERROR);
-	  dw_printf ("\nError reading from IGate server.  Closing connection.\n\n");
+	  if (n == 0) {
+	    dw_printf ("\nServer %s has closed connection.\n\n",
+			is_server[my_server_index].ipaddr_str);
+	  }
+	  else {
+	    dw_printf ("\nError reading from server %s.  Closing connection.\n\n", 										is_server[my_server_index].ipaddr_str);
+	  }
 #if __WIN32__
 	  closesocket (is_server[my_server_index].igate_sock);
 #else
