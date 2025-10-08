@@ -321,7 +321,7 @@ void multi_modem_process_rec_frame (int chan, int subchan, int slice, unsigned c
 
 	assert (chan >= 0 && chan < MAX_RADIO_CHANS);
 	assert (subchan >= 0 && subchan < MAX_SUBCHANS);
-	assert (slice >= 0 && slice < MAX_SUBCHANS);
+	assert (slice >= 0 && slice < MAX_SLICERS);
 
 // Special encapsulation for AIS & EAS so they can be treated normally pretty much everywhere else.
 
