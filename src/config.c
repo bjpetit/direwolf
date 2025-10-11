@@ -1382,6 +1382,70 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	  }
 
 /*
+ * SCHANNEL chan device baudrate		- Define Serial TNC virtual channel.
+ *
+ *	This allows a client application to talk to to an external TNC over serial KISS
+ *	by using a channel number outside the normal range for modems.
+ *	This does not change the current channel number used by MODEM, PTT, etc.
+ *
+ *	chan = direwolf channel.
+ *	device = device (serial port) name of serial TNC.
+ *	baudrate = baud rate for communicating with serial TNC.
+ *
+ *	Future: Might allow selection of channel on the serial TNC.
+ *	For now, ignore incoming and set to 0 for outgoing.
+ *
+ * FIXME: Can't set mycall for schannel.
+ */
+
+	  else if (strcasecmp(t, "SCHANNEL") == 0) {
+	    t = split(NULL,0);
+	    if (t == NULL) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: Missing virtual channel number for SCHANNEL command.\n", line);
+	      continue;
+	    }
+	    int nchan = atoi(t);
+            if (nchan >= MAX_RADIO_CHANS && nchan < MAX_TOTAL_CHANS) {
+
+	      if (p_audio_config->chan_medium[nchan] == MEDIUM_NONE) {
+
+	        p_audio_config->chan_medium[nchan] = MEDIUM_SERTNC;
+	      }
+	      else {
+	        text_color_set(DW_COLOR_ERROR);
+                dw_printf ("Line %d: SCHANNEL can't use channel %d because it is already in use.\n", line, nchan);
+	      }
+	    }
+	    else {
+	      text_color_set(DW_COLOR_ERROR);
+              dw_printf ("Line %d: SCHANNEL number must in range of %d to %d.\n", line, MAX_RADIO_CHANS, MAX_TOTAL_CHANS-1);
+	    }
+
+	    t = split(NULL,0);
+	    if (t == NULL) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: Missing serial TNC device for SCHANNEL command.\n", line);
+	      continue;
+	    }
+	    strlcpy (p_audio_config->sertnc_device[nchan], t, sizeof(p_audio_config->sertnc_device[nchan]));
+	    int n;
+	    t = split(NULL,0);
+	    if (t != NULL) {
+	      n = atoi(t);
+	      if (n != 1200 && n != 2400 && n != 4800 && n != 9600 && n != 19200 && n != 38400 && n != 57600 && n != 115200) {
+	        text_color_set(DW_COLOR_ERROR);
+	        dw_printf ("Line %d: Warning: Unsupported data rate of %d bits per second.  Using 9600.\n", line, n);
+	        n = 9600;
+    	      }
+	      p_audio_config->sertnc_baud[nchan] = n;
+	    }
+	    else {
+	      p_audio_config->sertnc_baud[nchan] = 9600;
+	    }
+	  }
+
+/*
  * MYCALL station
  */
 	  else if (strcasecmp(t, "mycall") == 0) {
@@ -2749,7 +2813,8 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	    // Channels specified must be radio channels or network TNCs.
 
 	    if (p_audio_config->chan_medium[from_chan] != MEDIUM_RADIO &&
-	        p_audio_config->chan_medium[from_chan] != MEDIUM_NETTNC) {
+	        p_audio_config->chan_medium[from_chan] != MEDIUM_NETTNC &&
+	        p_audio_config->chan_medium[from_chan] != MEDIUM_SERTNC) {
 	      text_color_set(DW_COLOR_ERROR);
 	      dw_printf ("Config file, line %d: FROM-channel %d is not valid.\n", 
 							line, from_chan);
@@ -2777,7 +2842,8 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	    }
 
 	    if (p_audio_config->chan_medium[to_chan] != MEDIUM_RADIO &&
-	        p_audio_config->chan_medium[to_chan] != MEDIUM_NETTNC) {
+	        p_audio_config->chan_medium[to_chan] != MEDIUM_NETTNC &&
+	        p_audio_config->chan_medium[to_chan] != MEDIUM_SERTNC) {
 	      text_color_set(DW_COLOR_ERROR);
 	      dw_printf ("Config file, line %d: TO-channel %d is not valid.\n", 
 							line, to_chan);
@@ -3111,7 +3177,8 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	      }
 
 	      if (p_audio_config->chan_medium[from_chan] != MEDIUM_RADIO &&
-		  p_audio_config->chan_medium[from_chan] != MEDIUM_NETTNC) {
+		  p_audio_config->chan_medium[from_chan] != MEDIUM_NETTNC &&
+		  p_audio_config->chan_medium[from_chan] != MEDIUM_SERTNC) {
 	        text_color_set(DW_COLOR_ERROR);
 	        dw_printf ("Config file, line %d: FROM-channel %d is not valid.\n", 
 							line, from_chan);
@@ -3149,7 +3216,8 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	        continue;
 	      }
 	      if (p_audio_config->chan_medium[to_chan] != MEDIUM_RADIO &&
-		  p_audio_config->chan_medium[to_chan] != MEDIUM_NETTNC) {
+		  p_audio_config->chan_medium[to_chan] != MEDIUM_NETTNC &&
+		  p_audio_config->chan_medium[to_chan] != MEDIUM_SERTNC) {
 	        text_color_set(DW_COLOR_ERROR);
 	        dw_printf ("Config file, line %d: TO-channel %d is not valid.\n", 
 							line, to_chan);
@@ -4429,7 +4497,8 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	          x = -1;
 	        }
 	        else if (p_audio_config->chan_medium[x] != MEDIUM_RADIO &&
-			 p_audio_config->chan_medium[x] != MEDIUM_NETTNC) {
+			 p_audio_config->chan_medium[x] != MEDIUM_NETTNC &&
+			 p_audio_config->chan_medium[x] != MEDIUM_SERTNC) {
 	          text_color_set(DW_COLOR_ERROR);
 	          dw_printf ("Config file, line %d: TTOBJ transmit channel %d is not valid.\n", line, x);
 	          x = -1;
@@ -5784,7 +5853,9 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 /* When IGate is enabled, all radio channels must have a callsign associated. */
 
 	  if (strlen(p_igate_config->t2_login) > 0 &&
-	      (p_audio_config->chan_medium[i] == MEDIUM_RADIO || p_audio_config->chan_medium[i] == MEDIUM_NETTNC)) {
+	      (p_audio_config->chan_medium[i] == MEDIUM_RADIO ||
+	        p_audio_config->chan_medium[i] == MEDIUM_NETTNC ||
+	        p_audio_config->chan_medium[i] == MEDIUM_SERTNC)) {
 
 	    if (strcmp(p_audio_config->mycall[i], "NOCALL") == 0  || strcmp(p_audio_config->mycall[i], "N0CALL") == 0) {
 	      text_color_set(DW_COLOR_ERROR);
@@ -5810,7 +5881,9 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 
 	if (strlen(p_igate_config->t2_login) > 0) {
 	  for (j=0; j<MAX_TOTAL_CHANS; j++) {
-	    if (p_audio_config->chan_medium[j] == MEDIUM_RADIO || p_audio_config->chan_medium[j] == MEDIUM_NETTNC) {
+	    if (p_audio_config->chan_medium[j] == MEDIUM_RADIO ||
+	        p_audio_config->chan_medium[j] == MEDIUM_NETTNC ||
+	        p_audio_config->chan_medium[j] == MEDIUM_SERTNC) {
 	      if (p_digi_config->filter_str[MAX_TOTAL_CHANS][j] == NULL) {
 	        p_digi_config->filter_str[MAX_TOTAL_CHANS][j] = strdup("i/180");
 	      }

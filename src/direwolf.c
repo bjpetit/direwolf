@@ -131,6 +131,7 @@
 #include "dlq.h"		// for fec_type_t definition.
 #include "deviceid.h"
 #include "nettnc.h"
+#include "sertnc.h"
 
 
 //static int idx_decoded = 0;
@@ -1018,11 +1019,12 @@ int main (int argc, char *argv[])
 	il2p_init (d_2_opt);
 
 /*
- * New in 1.8 - Allow a channel to be mapped to a network TNC rather than
- * an internal modem and radio.
+ * New in 1.8 - Allow a channel to be mapped to a network or serial TNC rather
+ * than an internal modem and radio.
  * I put it here so channel properties would come out in right order.
  */
 	nettnc_init (&audio_config);
+	sertnc_init (&audio_config);
 
 /*
  * Initialize the touch tone decoder & APRStt gateway.
@@ -1191,6 +1193,7 @@ int main (int argc, char *argv[])
  *				-1 for DTMF decoder.
  *				-2 for channel mapped to APRS-IS.
  *				-3 for channel mapped to network TNC.
+ *				-4 for channel mapped to serial TNC.
  *		slice	- Slicer which caught it.
  *		pp	- Packet handle.
  *		alevel	- Audio level, range of 0 - 100.
@@ -1221,7 +1224,7 @@ void app_process_rec_packet (int chan, int subchan, int slice, packet_t pp, alev
 								// Can indicate FX.25/IL2P or fix_bits.
 
 	assert (chan >= 0 && chan < MAX_TOTAL_CHANS);		// TOTAL for virtual channels
-	assert (subchan >= -3 && subchan < MAX_SUBCHANS);
+	assert (subchan >= -4 && subchan < MAX_SUBCHANS);
 	assert (slice >= 0 && slice < MAX_SLICERS);
 	assert (pp != NULL);	// 1.1J+
      
@@ -1342,7 +1345,7 @@ void app_process_rec_packet (int chan, int subchan, int slice, packet_t pp, alev
 	  dw_printf ("Setting audio input level so most stations are around 50 will provide good dyanmic range.\n");
 	}
 // FIXME: rather than checking for ichannel, how about checking medium==radio
-	else if (alevel.rec < 5 && chan != audio_config.igate_vchannel && subchan != -3) {
+	else if (alevel.rec < 5 && chan != audio_config.igate_vchannel && subchan != SUBCHAN_NETTNC && subchan != SUBCHAN_SERTNC) {
 
 	  text_color_set(DW_COLOR_ERROR);
 	  dw_printf ("Audio input level is too low.  Increase so most stations are around 50.\n");
@@ -1367,15 +1370,19 @@ void app_process_rec_packet (int chan, int subchan, int slice, packet_t pp, alev
 	  strlcpy (ts, "", sizeof(ts));
 	}
 
-	if (subchan == -1) {	// dtmf
+	if (subchan == SUBCHAN_DTMF) {
 	  text_color_set(DW_COLOR_REC);
 	  dw_printf ("[%d.dtmf%s] ", chan, ts);
 	}
-	else if (subchan == -2) {	// APRS-IS
+	else if (subchan == SUBCHAN_APRSIS) {
 	  text_color_set(DW_COLOR_REC);
 	  dw_printf ("[%d.is%s] ", chan, ts);
 	}
-	else if (subchan == -3) {	// nettnc
+	else if (subchan == SUBCHAN_NETTNC) {
+	  text_color_set(DW_COLOR_REC);
+	  dw_printf ("[%d%s] ", chan, ts);
+	}
+	else if (subchan == SUBCHAN_SERTNC) {
 	  text_color_set(DW_COLOR_REC);
 	  dw_printf ("[%d%s] ", chan, ts);
 	}

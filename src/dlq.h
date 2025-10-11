@@ -62,8 +62,12 @@ typedef struct dlq_item_s {
 
 	int subchan;			/* Winning "subchannel" when using multiple */
 					/* decoders on one channel.  */
-					/* Special case, -1 means DTMF decoder. */
 					/* Maybe we should have a different type in this case? */
+
+#define SUBCHAN_DTMF   -1
+#define SUBCHAN_APRSIS -2
+#define SUBCHAN_NETTNC -3
+#define SUBCHAN_SERTNC -4
 
 	int slice;			/* Winning slicer. */
 
