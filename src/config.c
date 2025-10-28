@@ -4884,7 +4884,7 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 
 
 /*
- * SATGATE 		- Special SATgate mode to delay packets heard directly.
+ * SATGATE 		- Turned out to be not such a good idea.
  *
  * SATGATE [ n ]
  */
@@ -4892,24 +4892,8 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	  else if (strcasecmp(t, "SATGATE") == 0) {
 
 	    text_color_set(DW_COLOR_ERROR);
-	    dw_printf ("Line %d: SATGATE is pretty useless and will be removed in a future version.\n", line);
+	    dw_printf ("Line %d: See User Guide for SATgate suggestions.\n", line);
 
-	    t = split(NULL,0);
-	    if (t != NULL) {
-
-	      int n = atoi(t);
-              if (n >= MIN_SATGATE_DELAY && n <= MAX_SATGATE_DELAY) {
-	        p_igate_config->satgate_delay = n;
-	      }
-	      else {
-	        p_igate_config->satgate_delay = DEFAULT_SATGATE_DELAY;
-	        text_color_set(DW_COLOR_ERROR);
-                dw_printf ("Line %d: Unreasonable SATgate delay.  Using default.\n", line);
-	      }
-	    }
-	    else {
-	      p_igate_config->satgate_delay = DEFAULT_SATGATE_DELAY;
-	    }
 	  }
 
 
