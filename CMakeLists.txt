@@ -126,7 +126,23 @@ include(FindCompiler)
 # find cpu flags (and set compiler)
 include(FindCPUflags)
 
-if(${ARCHITECTURE} MATCHES "x86")
+# temp for testing
+#message(STATUS "CMAKE_C_COMPILER: ${CMAKE_C_COMPILER}")
+#message(STATUS "Pointer size: ${CMAKE_SIZEOF_VOID_P}")
+#if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+#    message(STATUS "Target is 64-bit")
+#elseif(CMAKE_SIZEOF_VOID_P EQUAL 4)
+#    message(STATUS "Target is 32-bit")
+#else()
+#    message(WARNING "Unknown pointer size: ${CMAKE_SIZEOF_VOID_P}")
+#endif()
+
+
+#message(STATUS "ARCHITECTURE: ${ARCHITECTURE}")
+# For Intel/AMD target, we should see x86 or x86_64.
+# i686 package name for 32 bit is to imply minimum Pentium III with SSE instructions.
+
+if(${ARCHITECTURE} STREQUAL "x86")
   set(CPACK_PACKAGE_FILE_NAME "${CMAKE_PROJECT_NAME}-${direwolf_VERSION}_i686")
 else()
   set(CPACK_PACKAGE_FILE_NAME "${CMAKE_PROJECT_NAME}-${direwolf_VERSION}_${ARCHITECTURE}")
@@ -171,6 +187,7 @@ elseif(APPLE)
   endif()
 
 elseif (WIN32)
+
   if(C_MSVC)
     if (NOT VS2015 AND NOT VS2017 AND NOT VS2019)
       message(FATAL_ERROR "You must use Microsoft Visual Studio 2015, 2017 or 2019 as compiler")
