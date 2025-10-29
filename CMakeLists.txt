@@ -1,10 +1,10 @@
-cmake_minimum_required(VERSION 3.5.0)
+cmake_minimum_required(VERSION 3.10.0)
 
 project(direwolf)
 
 # configure version
 set(direwolf_VERSION_MAJOR "1")
-set(direwolf_VERSION_MINOR "7")
+set(direwolf_VERSION_MINOR "8")
 set(direwolf_VERSION_PATCH "0")
 set(direwolf_VERSION_SUFFIX "Development")
 
@@ -15,12 +15,14 @@ option(FORCE_SSSE3 "Compile with SSSE3 instruction only" OFF)
 option(FORCE_SSE41 "Compile with SSE4.1 instruction only" OFF)
 option(OPTIONAL_TEST "Compile optional test (might be broken)" OFF)
 # UNITTEST option must be after CMAKE_BUILT_TYPE
+option(OPTIONAL_DNSSD "Include support for DNS-SD" ON)
 
 # where cmake find custom modules
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake/modules)
 
 # fix c standard used on the project
-set(CMAKE_C_STANDARD 99)
+# No, specifying c99 prevented cpp 15 (c23) from pointing out an error.
+# removed for release 1.8 # set(CMAKE_C_STANDARD 99)
 
 # Set additional project information
 set(COMPANY "wb2osz")
@@ -28,7 +30,7 @@ add_definitions("-DCOMPANY=\"${COMPANY}\"")
 set(APPLICATION_NAME "Dire Wolf")
 add_definitions("-DAPPLICATION_NAME=\"${APPLICATION_NAME}\"")
 set(APPLICATION_MAINTAINER="John Langner, WB2OSZ")
-set(COPYRIGHT "Copyright (c) 2019 John Langner, WB2OSZ. All rights reserved.")
+set(COPYRIGHT "Copyright (c) 2011-2025 John Langner, WB2OSZ. All rights reserved.")
 add_definitions("-DCOPYRIGHT=\"${COPYRIGHT}\"")
 set(IDENTIFIER "com.${COMPANY}.${APPLICATION_NAME}")
 add_definitions("-DIDENTIFIER=\"${IDENTIFIER}\"")
@@ -124,7 +126,23 @@ include(FindCompiler)
 # find cpu flags (and set compiler)
 include(FindCPUflags)
 
-if(${ARCHITECTURE} MATCHES "x86")
+# temp for testing
+#message(STATUS "CMAKE_C_COMPILER: ${CMAKE_C_COMPILER}")
+#message(STATUS "Pointer size: ${CMAKE_SIZEOF_VOID_P}")
+#if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+#    message(STATUS "Target is 64-bit")
+#elseif(CMAKE_SIZEOF_VOID_P EQUAL 4)
+#    message(STATUS "Target is 32-bit")
+#else()
+#    message(WARNING "Unknown pointer size: ${CMAKE_SIZEOF_VOID_P}")
+#endif()
+
+
+#message(STATUS "ARCHITECTURE: ${ARCHITECTURE}")
+# For Intel/AMD target, we should see x86 or x86_64.
+# i686 package name for 32 bit is to imply minimum Pentium III with SSE instructions.
+
+if(${ARCHITECTURE} STREQUAL "x86")
   set(CPACK_PACKAGE_FILE_NAME "${CMAKE_PROJECT_NAME}-${direwolf_VERSION}_i686")
 else()
   set(CPACK_PACKAGE_FILE_NAME "${CMAKE_PROJECT_NAME}-${direwolf_VERSION}_${ARCHITECTURE}")
@@ -162,11 +180,14 @@ elseif(APPLE)
   set(CMAKE_MACOSX_RPATH ON)
   message(STATUS "RPATH support: ${CMAKE_MACOSX_RPATH}")
 
-  # just blindly enable dns-sd
-  set(USE_MACOS_DNSSD ON)
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUSE_MACOS_DNSSD")
+  # optionally enable dns-sd
+  if(OPTIONAL_DNSSD)
+    set(USE_MACOS_DNSSD ON)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUSE_MACOS_DNSSD")
+  endif()
 
 elseif (WIN32)
+
   if(C_MSVC)
     if (NOT VS2015 AND NOT VS2017 AND NOT VS2019)
       message(FATAL_ERROR "You must use Microsoft Visual Studio 2015, 2017 or 2019 as compiler")
@@ -210,6 +231,7 @@ if (C_CLANG OR C_GCC)
   # TODO:
   # Try error checking -fsanitize=bounds-strict -fsanitize=leak
   # Requires libubsan and liblsan, respectively.
+  # Maybe -fstack-protector-all, -fstack-check
 
   ###set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wvla -ffast-math -ftree-vectorize -D_XOPEN_SOURCE=600 -D_DEFAULT_SOURCE ${EXTRA_FLAGS}")
   if(FREEBSD)
@@ -320,6 +342,38 @@ else()
   set(HAMLIB_LIBRARIES "")
 endif()
 
+find_package(gpiod)
+if(GPIOD_FOUND)
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUSE_GPIOD")
+
+  # Version 2 uses a completely different API.
+  # Try to determine version and put it on compile command line.
+
+  # Require pkg-config support
+  find_package(PkgConfig REQUIRED)
+  # Probe for libgpiod
+  pkg_check_modules(LIBGPIOD REQUIRED libgpiod)
+  # Abort if not found
+  if(NOT LIBGPIOD_FOUND)
+    message(FATAL_ERROR "libgpiod not found via pkg-config")
+  endif()
+
+  # LIBGPIOD_VERSION holds the full x.y.z string
+
+  # Now split out major and minor versions into separate integers
+  string(REPLACE "." ";" VLIST ${LIBGPIOD_VERSION})
+  list(GET VLIST 0 LIBGPIOD_VERSION_MAJOR)
+  list(GET VLIST 1 LIBGPIOD_VERSION_MINOR)
+  message(STATUS "libgpiod version ${LIBGPIOD_VERSION} major=${LIBGPIOD_VERSION_MAJOR} minor=${LIBGPIOD_VERSION_MINOR}")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DLIBGPIOD_VERSION=${LIBGPIOD_VERSION}")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DLIBGPIOD_VERSION_MAJOR=${LIBGPIOD_VERSION_MAJOR}")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DLIBGPIOD_VERSION_MINOR=${LIBGPIOD_VERSION_MINOR}")
+
+else()
+  set(GPIOD_INCLUDE_DIRS "")
+  set(GPIOD_LIBRARIES "")
+endif()
+
 if(LINUX)
   find_package(ALSA REQUIRED)
   if(ALSA_FOUND)
@@ -331,15 +385,28 @@ if(LINUX)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUSE_CM108")
   endif()
 
-  find_package(Avahi)
-  if(AVAHI_CLIENT_FOUND)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUSE_AVAHI_CLIENT")
+  if(OPTIONAL_DNSSD)
+    find_package(Avahi)
+    if(AVAHI_CLIENT_FOUND)
+      set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUSE_AVAHI_CLIENT")
+    endif()
   endif()
 
 elseif (HAVE_SNDIO)
   find_package(sndio REQUIRED)
   if(SNDIO_FOUND)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUSE_SNDIO")
+  endif()
+
+elseif (APPLE)
+  find_package(Portaudio REQUIRED)
+  if(PORTAUDIO_FOUND)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUSE_PORTAUDIO")
+  endif()
+
+  find_package(hidapi REQUIRED)
+  if(HIDAPI_FOUND)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUSE_CM108")
   endif()
 
 elseif (NOT WIN32 AND NOT CYGWIN)
@@ -367,7 +434,10 @@ add_subdirectory(data)
 # external libraries
 add_subdirectory(${CUSTOM_GEOTRANZ_DIR})
 add_subdirectory(${CUSTOM_REGEX_DIR})
-add_subdirectory(${CUSTOM_HIDAPI_DIR})
+if(NOT APPLE)
+  # Mac builds use the hidapi library, not custom local files
+  add_subdirectory(${CUSTOM_HIDAPI_DIR})
+endif()
 add_subdirectory(${CUSTOM_MISC_DIR})
 
 # direwolf source code and utilities

@@ -56,7 +56,7 @@ configure_file(
 
 configure_file(
   "${CUSTOM_TEST_SCRIPTS_DIR}/${TEST_CHECK-MODEM300_FILE}"
-  "${CUSTOM_TEST_BINARY_DIR}${CUSTOM_SCRIPT_SUFFIX}"
+  "${CUSTOM_TEST_BINARY_DIR}/${TEST_CHECK-MODEM300_FILE}${CUSTOM_SCRIPT_SUFFIX}"
   @ONLY
   )
 
@@ -147,6 +147,7 @@ list(APPEND dtest_SOURCES
   ${CUSTOM_SRC_DIR}/tq.c
   ${CUSTOM_SRC_DIR}/textcolor.c
   ${CUSTOM_SRC_DIR}/decode_aprs.c
+  ${CUSTOM_SRC_DIR}/deviceid.c
   ${CUSTOM_SRC_DIR}/dwgpsnmea.c
   ${CUSTOM_SRC_DIR}/dwgps.c
   ${CUSTOM_SRC_DIR}/dwgpsd.c
@@ -232,6 +233,7 @@ list(APPEND pftest_SOURCES
   ${CUSTOM_SRC_DIR}/textcolor.c
   ${CUSTOM_SRC_DIR}/fcs_calc.c
   ${CUSTOM_SRC_DIR}/decode_aprs.c
+  ${CUSTOM_SRC_DIR}/deviceid.c
   ${CUSTOM_SRC_DIR}/dwgpsnmea.c
   ${CUSTOM_SRC_DIR}/dwgps.c
   ${CUSTOM_SRC_DIR}/dwgpsd.c
@@ -522,6 +524,7 @@ if(OPTIONAL_TEST)
     ${CUSTOM_SRC_DIR}/pfilter.c
     ${CUSTOM_SRC_DIR}/telemetry.c
     ${CUSTOM_SRC_DIR}/decode_aprs.c
+    ${CUSTOM_SRC_DIR}/deviceid.c
     ${CUSTOM_SRC_DIR}/dwgpsnmea.c
     ${CUSTOM_SRC_DIR}/dwgps.c
     ${CUSTOM_SRC_DIR}/dwgpsd.c
@@ -574,6 +577,7 @@ if(OPTIONAL_TEST)
     ${CUSTOM_SRC_DIR}/fcs_calc.c
     ${CUSTOM_SRC_DIR}/ax25_pad.c
     ${CUSTOM_SRC_DIR}/decode_aprs.c
+    ${CUSTOM_SRC_DIR}/deviceid.c
     ${CUSTOM_SRC_DIR}/dwgpsnmea.c
     ${CUSTOM_SRC_DIR}/dwgps.c
     ${CUSTOM_SRC_DIR}/dwgpsd.c

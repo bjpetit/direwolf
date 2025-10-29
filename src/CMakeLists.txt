@@ -10,12 +10,19 @@ include_directories(
   ${PORTAUDIO_INCLUDE_DIRS}
   ${SNDIO_INCLUDE_DIRS}
   ${CUSTOM_GEOTRANZ_DIR}
-  ${CUSTOM_HIDAPI_DIR}
+  ${GPIOD_INCLUDE_DIRS}
   )
 
 if(WIN32 OR CYGWIN)
   include_directories(
+    ${CUSTOM_HIDAPI_DIR}
     ${CUSTOM_REGEX_DIR}
+  )
+endif()
+
+if(APPLE)
+  include_directories(
+    ${HIDAPI_INCLUDE_DIRS}
   )
 endif()
 
@@ -32,6 +39,7 @@ list(APPEND direwolf_SOURCES
   beacon.c
   config.c
   decode_aprs.c
+  deviceid.c
   dedupe.c
   demod_9600.c
   demod_afsk.c
@@ -77,6 +85,7 @@ list(APPEND direwolf_SOURCES
   morse.c
   multi_modem.c
   waypoint.c
+  nettnc.c
   serial_port.c
   pfilter.c
   ptt.c
@@ -95,6 +104,7 @@ list(APPEND direwolf_SOURCES
   dwgpsnmea.c
   dwgpsd.c
   mheard.c
+  gpio_common.c
   )
 
 if(LINUX)
@@ -119,7 +129,7 @@ if(LINUX)
 
       # icon
       # require plain gcc binary or link
-      #${CMAKE_SOURCE_DIR}/cmake/cpack/direwolf.rc
+      ${CMAKE_SOURCE_DIR}/cmake/cpack/direwolf.rc
       )
     list(REMOVE_ITEM direwolf_SOURCES
       dwgpsd.c
@@ -131,6 +141,7 @@ if(LINUX)
   else() # macOS freebsd
     list(APPEND direwolf_SOURCES
       audio_portaudio.c
+      cm108.c
       )
     if(USE_MACOS_DNSSD)
       list(APPEND direwolf_SOURCES
@@ -155,6 +166,7 @@ target_link_libraries(direwolf
   ${ALSA_LIBRARIES}
   ${UDEV_LIBRARIES}
   ${PORTAUDIO_LIBRARIES}
+  ${GPIOD_LIBRARIES}
   ${SNDIO_LIBRARIES}
   ${AVAHI_LIBRARIES}
   )
@@ -169,6 +181,7 @@ endif()
 # decode_aprs
 list(APPEND decode_aprs_SOURCES
   decode_aprs.c
+  deviceid.c
   ais.c
   kiss_frame.c
   ax25_pad.c
@@ -353,6 +366,7 @@ list(APPEND atest_SOURCES
   ax25_pad.c
   ax25_pad2.c
   decode_aprs.c
+  deviceid.c
   dwgpsnmea.c
   dwgps.c
   dwgpsd.c
@@ -469,10 +483,11 @@ endif()
 
 # List USB audio adapters than can use GPIO for PTT.
 # Originally for Linux only (using udev).
-# Version 1.7 adds it for Windows.  Needs hidapi library.
+# Version 1.7 adds it for Windows.  Uses local hidapi code.
+# Post-1.7 adds it for Mac. Uses hidapi library.
 
 # cm108
-if(UDEV_FOUND OR WIN32 OR CYGWIN)
+if(UDEV_FOUND OR WIN32 OR CYGWIN OR HIDAPI_FOUND)
   list(APPEND cm108_SOURCES
     cm108.c
     textcolor.c
@@ -493,6 +508,12 @@ if(UDEV_FOUND OR WIN32 OR CYGWIN)
   if (LINUX)
     target_link_libraries(cm108
       ${UDEV_LIBRARIES}
+      )
+  endif()
+
+  if (APPLE)
+    target_link_libraries(cm108
+      ${HIDAPI_LIBRARIES}
       )
   endif()
 
@@ -568,6 +589,6 @@ install(TARGETS ttcalc DESTINATION ${INSTALL_BIN_DIR})
 install(TARGETS kissutil DESTINATION ${INSTALL_BIN_DIR})
 install(TARGETS tnctest DESTINATION ${INSTALL_BIN_DIR})
 install(TARGETS appserver DESTINATION ${INSTALL_BIN_DIR})
-if(UDEV_FOUND OR WIN32 OR CYGWIN)
+if(UDEV_FOUND OR WIN32 OR CYGWIN OR HIDAPI_FOUND)
   install(TARGETS cm108 DESTINATION ${INSTALL_BIN_DIR})
 endif()

@@ -1,7 +1,7 @@
 //
 //    This file is part of Dire Wolf, an amateur radio packet TNC.
 //
-//    Copyright (C) 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2021  John Langner, WB2OSZ
+//    Copyright (C) 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2021, 2023  John Langner, WB2OSZ
 //
 //    This program is free software: you can redistribute it and/or modify
 //    it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 #define CONFIG_C 1		// influences behavior of aprs_tt.h
 
 
-// #define DEBUG 1
+//#define DEBUG 1
 
 /*------------------------------------------------------------------
  *
@@ -43,6 +43,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <math.h>
+#include <limits.h>		// for PATH_MAX
 
 #if ENABLE_GPSD
 #include <gps.h>		/* for DEFAULT_GPSD_PORT  (2947) */
@@ -683,7 +684,8 @@ static char *split (char *string, int rest_of_line)
  *
  * Purpose:     Read configuration file when application starts up.
  *
- * Inputs:	fname		- Name of configuration file.
+ * Inputs:	fname		- Name of configuration file.  Either default of direwolf.conf
+ *					or specified by user with -c command line option.
  *
  * Outputs:	p_audio_config		- Radio channel parameters stored here.
  *
@@ -716,6 +718,7 @@ static void rtfm()
 	dw_printf ("    stable release:    https://github.com/wb2osz/direwolf/tree/master/doc\n");
 	dw_printf ("    development version:    https://github.com/wb2osz/direwolf/tree/dev/doc\n");
 	dw_printf ("    additional topics:    https://github.com/wb2osz/direwolf-doc\n");
+	dw_printf ("    general APRS info:    https://how.aprs.works\n");
 }
 
 void config_init (char *fname, struct audio_s *p_audio_config, 
@@ -726,7 +729,6 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 			struct misc_config_s *p_misc_config)
 {
 	FILE *fp;
-	char filepath[128];
 	char stuff[MAXCMDLEN];
 	int line;
 	int channel;
@@ -755,19 +757,26 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	  strlcpy (p_audio_config->adev[adevice].adevice_out, DEFAULT_ADEVICE, sizeof(p_audio_config->adev[adevice].adevice_out));
 
 	  p_audio_config->adev[adevice].defined = 0;
+	  p_audio_config->adev[adevice].copy_from = -1;
 	  p_audio_config->adev[adevice].num_channels = DEFAULT_NUM_CHANNELS;		/* -2 stereo */
 	  p_audio_config->adev[adevice].samples_per_sec = DEFAULT_SAMPLES_PER_SEC;	/* -r option */
 	  p_audio_config->adev[adevice].bits_per_sample = DEFAULT_BITS_PER_SAMPLE;	/* -8 option for 8 instead of 16 bits */
 	}
 
-	p_audio_config->adev[0].defined = 1;
+	p_audio_config->adev[0].defined = 2;		// 2 means it was done by default and not the user's config file.
 
-	for (channel=0; channel<MAX_CHANS; channel++) {
-	  int ot, it;
-
+// MAX_TOTAL_CHANS
+	for (channel=0; channel<MAX_TOTAL_CHANS; channel++) {
 	  p_audio_config->chan_medium[channel] = MEDIUM_NONE;	/* One or both channels will be */
 								/* set to radio when corresponding */
 								/* audio device is defined. */
+	}
+
+// MAX_RADIO_CHANS for achan[]
+// Maybe achan should be renamed to radiochan to make it clearer.
+	for (channel=0; channel<MAX_RADIO_CHANS; channel++) {
+	  int ot, it;
+
 	  p_audio_config->achan[channel].modem_type = MODEM_AFSK;			
 	  p_audio_config->achan[channel].v26_alternative = V26_UNSPECIFIED;
 	  p_audio_config->achan[channel].mark_freq = DEFAULT_MARK_FREQ;		/* -m option */
@@ -925,64 +934,84 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 
 	p_misc_config->maxframe_extended = AX25_K_MAXFRAME_EXTENDED_DEFAULT;	/* Max frames to send before ACK.  mod 128 "Window" size. */
 
-	p_misc_config->maxv22 = AX25_N2_RETRY_DEFAULT / 3;	/* Max SABME before falling back to SABM. */
-	p_misc_config->v20_addrs = NULL;			/* Go directly to v2.0 for stations listed. */
+	p_misc_config->maxv22 = AX25_N2_RETRY_DEFAULT / 3;	/* Send SABME this many times before falling back to SABM. */
+	p_misc_config->v20_addrs = NULL;			/* Go directly to v2.0 for stations listed */
+								/* without trying v2.2 first. */
 	p_misc_config->v20_count = 0;
 	p_misc_config->noxid_addrs = NULL;			/* Don't send XID to these stations. */
+								/* Might work with a partial v2.2 implementation */
+								/* on the other end. */
 	p_misc_config->noxid_count = 0;
-
-/* 
- * Try to extract options from a file.
- * 
- * Windows:  File must be in current working directory.
- *
- * Linux: Search current directory then home directory.
- *
- * Future possibility - Could also search home directory
- * for Windows by combinting two variables:
- *	HOMEDRIVE=C:
- *	HOMEPATH=\Users\John
- *
- * It's not clear if this always points to same location:
- *	USERPROFILE=C:\Users\John
- */
-
 
 	channel = 0;
 	adevice = 0;
 
-// TODO: Would be better to have a search list and loop thru it.
+/* 
+ * Try to extract options from a file.
+ * 
+ * First look in cwd, then try home dir.
+ *
+ * Try using this to get Windows home directory:
+ *	USERPROFILE=C:\Users\John
+ * If that fails, we might combine two variables:
+ *	HOMEDRIVE=C:
+ *	HOMEPATH=\Users\John
+ */
 
-        strlcpy(filepath, fname, sizeof(filepath));
 
-        fp = fopen (filepath, "r");
-	
-#ifndef __WIN32__
-	if (fp == NULL && strcmp(fname, "direwolf.conf") == 0) {
-	/* Failed to open the default location.  Try home dir. */
-	  char *p;
-
-
-          strlcpy (filepath, "", sizeof(filepath));
-
-	  p = getenv("HOME");
-	  if (p != NULL) {
-	    strlcpy (filepath, p, sizeof(filepath));
-	    strlcat (filepath, "/direwolf.conf", sizeof(filepath));
-	    fp = fopen (filepath, "r");
-	  } 
-	}
+/*
+ * There have been cases where someone had multiple direwolf.conf files
+ * in different places and wasted a lot of time and effort because the
+ * wrong one was being used.
+ *
+ * In version 1.8, I will attempt to display the full absolute path so there
+ * is no confusion.  First look in cwd, then in home direectory.
+ */
+	fp = NULL;
+	char absfilepath[PATH_MAX];
+#ifdef __WIN32__
+	if (_fullpath (absfilepath, fname, sizeof(absfilepath)) != NULL) {
+#else
+	if (realpath (fname, absfilepath) != NULL) {
 #endif
+          fp = fopen (absfilepath, "r");
+	}
+
+	if (fp == NULL) {		// Failed.  Next, try home dir
+	  strlcpy (absfilepath, "", sizeof(absfilepath));
+#ifdef __WIN32__
+	  char *h = getenv("USERPROFILE");
+	  if (h != NULL && fname[0] != '\\' && fname[1] != ':') {
+	    strlcat (absfilepath, h, sizeof(absfilepath));
+	    strlcat (absfilepath, "\\", sizeof(absfilepath));
+	  }
+#else
+	  // Don't prepend home dir if absolute path given.
+	  char *h = getenv("HOME");
+	  if (h != NULL && fname[0] != '/') {
+	    strlcat (absfilepath, h, sizeof(absfilepath));
+	    strlcat (absfilepath, "/", sizeof(absfilepath));
+	  }
+#endif
+            strlcat (absfilepath, fname, sizeof(absfilepath));
+
+	  fp = fopen (absfilepath, "r");
+	}
+
 	if (fp == NULL)	{
-	  // TODO: not exactly right for all situations.
 	  text_color_set(DW_COLOR_ERROR);
-	  dw_printf ("ERROR - Could not open config file %s\n", filepath);
+	  dw_printf ("ERROR - Could not open configuration file %s in cwd or homedir.\n", fname);
 	  dw_printf ("Try using -c command line option for alternate location.\n");
+#ifndef __WIN32__
+	  dw_printf ("A sample direwolf.conf file should be found in one of:\n");
+	  dw_printf ("    /usr/local/share/doc/direwolf/conf/\n");
+	  dw_printf ("    /usr/share/doc/direwolf/conf/\n");
+#endif
 	  rtfm();
 	  exit(EXIT_FAILURE);
 	}
 	
-	dw_printf ("\nReading config file %s\n", filepath);
+	dw_printf ("\nReading config file %s\n", absfilepath);
 
 	line = 0;
 	while (fgets(stuff, sizeof(stuff), fp) != NULL) {
@@ -1012,7 +1041,11 @@ void config_init (char *fname, struct audio_s *p_audio_config,
  *			ADEVICE    plughw:1,0			-- same for in and out.
  *			ADEVICE	   plughw:2,0  plughw:3,0	-- different in/out for a channel or channel pair.
  *			ADEVICE1   udp:7355  default		-- from Software defined radio (SDR) via UDP.
- *	
+ *
+ *	New in 1.8: Ability to map to another audio device.
+ *	This allows multiple modems (i.e. data speeds) on the same audio interface.
+ *
+ *			ADEVICEn   = n				-- Copy from different already defined channel.
  */
 
 	  /* Note that ALSA name can contain comma such as hw:1,0 */
@@ -1040,17 +1073,42 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	      exit(EXIT_FAILURE);
 	    }
 
+	    // Do not allow same adevice to be defined more than once.
+	    // Overriding the default for adevice 0 is ok.
+	    // In that case definded was 2.  That's why we check for 1, not just non-zero.
+
+	    if (p_audio_config->adev[adevice].defined == 1) {		// 1 means defined by user.
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Config file: ADEVICE%d can't be defined more than once. Line %d.\n", adevice, line);
+	      continue;
+	    }
+
 	    p_audio_config->adev[adevice].defined = 1;
-	
-	    /* First channel of device is valid. */
-	    p_audio_config->chan_medium[ADEVFIRSTCHAN(adevice)] = MEDIUM_RADIO;
 
-	    strlcpy (p_audio_config->adev[adevice].adevice_in, t, sizeof(p_audio_config->adev[adevice].adevice_in));
-	    strlcpy (p_audio_config->adev[adevice].adevice_out, t, sizeof(p_audio_config->adev[adevice].adevice_out));
+	    // New case for release 1.8.
 
-	    t = split(NULL,0);
-	    if (t != NULL) {
+	    if (strcmp(t, "=") == 0) {
+	      t = split(NULL,0);
+	      if (t != NULL) {
+	        
+	      }
+
+/////////  to be continued....  FIXME
+
+	    }
+	    else {
+	      /* First channel of device is valid. */
+	      // This might be changed to UDP or STDIN when the device name is examined.
+	      p_audio_config->chan_medium[ADEVFIRSTCHAN(adevice)] = MEDIUM_RADIO;
+
+	      strlcpy (p_audio_config->adev[adevice].adevice_in, t, sizeof(p_audio_config->adev[adevice].adevice_in));
 	      strlcpy (p_audio_config->adev[adevice].adevice_out, t, sizeof(p_audio_config->adev[adevice].adevice_out));
+
+	      t = split(NULL,0);
+	      if (t != NULL) {
+		// Different audio devices for receive and transmit.
+	        strlcpy (p_audio_config->adev[adevice].adevice_out, t, sizeof(p_audio_config->adev[adevice].adevice_out));
+	      }
 	    }
 	  }
 
@@ -1188,8 +1246,11 @@ void config_init (char *fname, struct audio_s *p_audio_config,
  */
 
 /*
- * CHANNEL n		- Set channel for channel-specific commands.
+ * CHANNEL n		- Set channel for channel-specific commands.  Only for modem/radio channels.
  */
+
+// TODO: allow full range so mycall can be set for network channels.
+// Watch out for achan[] out of bounds.
 
 	  else if (strcasecmp(t, "CHANNEL") == 0) {
 	    int n;
@@ -1200,7 +1261,7 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	      continue;
 	    }
 	    n = atoi(t);
-            if (n >= 0 && n < MAX_CHANS) {
+            if (n >= 0 && n < MAX_RADIO_CHANS) {
 
 	      channel = n;
 
@@ -1220,7 +1281,7 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	    }
 	    else {
 	      text_color_set(DW_COLOR_ERROR);
-              dw_printf ("Line %d: Channel number must in range of 0 to %d.\n", line, MAX_CHANS-1);
+              dw_printf ("Line %d: Channel number must in range of 0 to %d.\n", line, MAX_RADIO_CHANS-1);
    	    }
 	  }
 
@@ -1241,7 +1302,7 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	      continue;
 	    }
 	    int ichan = atoi(t);
-            if (ichan >= MAX_CHANS && ichan < MAX_TOTAL_CHANS) {
+            if (ichan >= MAX_RADIO_CHANS && ichan < MAX_TOTAL_CHANS) {
 
 	      if (p_audio_config->chan_medium[ichan] == MEDIUM_NONE) {
 
@@ -1253,13 +1314,71 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	      }
 	      else {
 	        text_color_set(DW_COLOR_ERROR);
-                dw_printf ("Line %d: ICHANNEL can't use %d because it is already in use.\n", line, ichan);
+                dw_printf ("Line %d: ICHANNEL can't use channel %d because it is already in use.\n", line, ichan);
 	      }
 	    }
 	    else {
 	      text_color_set(DW_COLOR_ERROR);
-              dw_printf ("Line %d: ICHANNEL number must in range of %d to %d.\n", line, MAX_CHANS, MAX_TOTAL_CHANS-1);
+              dw_printf ("Line %d: ICHANNEL number must in range of %d to %d.\n", line, MAX_RADIO_CHANS, MAX_TOTAL_CHANS-1);
 	    }
+	  }
+
+/*
+ * NCHANNEL chan addr port			- Define Network TNC virtual channel.
+ *
+ *	This allows a client application to talk to to an external TNC over TCP KISS
+ *	by using a channel number outside the normal range for modems.
+ *	This does not change the current channel number used by MODEM, PTT, etc.
+ *
+ *	chan = direwolf channel.
+ *	addr = hostname or IP address of network TNC.
+ *	port = KISS TCP port on network TNC.
+ *
+ *	Future: Might allow selection of channel on the network TNC.
+ *	For now, ignore incoming and set to 0 for outgoing.
+ *
+ * FIXME: Can't set mycall for nchannel.
+ */
+
+	  else if (strcasecmp(t, "NCHANNEL") == 0) {
+	    t = split(NULL,0);
+	    if (t == NULL) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: Missing virtual channel number for NCHANNEL command.\n", line);
+	      continue;
+	    }
+	    int nchan = atoi(t);
+            if (nchan >= MAX_RADIO_CHANS && nchan < MAX_TOTAL_CHANS) {
+
+	      if (p_audio_config->chan_medium[nchan] == MEDIUM_NONE) {
+
+	        p_audio_config->chan_medium[nchan] = MEDIUM_NETTNC;
+	      }
+	      else {
+	        text_color_set(DW_COLOR_ERROR);
+                dw_printf ("Line %d: NCHANNEL can't use channel %d because it is already in use.\n", line, nchan);
+	      }
+	    }
+	    else {
+	      text_color_set(DW_COLOR_ERROR);
+              dw_printf ("Line %d: NCHANNEL number must in range of %d to %d.\n", line, MAX_RADIO_CHANS, MAX_TOTAL_CHANS-1);
+	    }
+
+	    t = split(NULL,0);
+	    if (t == NULL) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: Missing network TNC address for NCHANNEL command.\n", line);
+	      continue;
+	    }
+	    strlcpy (p_audio_config->nettnc_addr[nchan], t, sizeof(p_audio_config->nettnc_addr[nchan]));
+
+	    t = split(NULL,0);
+	    if (t == NULL) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: Missing network TNC TCP port for NCHANNEL command.\n", line);
+	      continue;
+	    }
+	    p_audio_config->nettnc_port[nchan] = atoi(t);
 	  }
 
 /*
@@ -1297,14 +1416,14 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 
 	      int c;
 
-	      for (c = 0; c < MAX_CHANS; c++) {
+	      for (c = 0; c < MAX_TOTAL_CHANS; c++) {
 
 	        if (c == channel || 
-			strlen(p_audio_config->achan[c].mycall) == 0 || 
-			strcasecmp(p_audio_config->achan[c].mycall, "NOCALL") == 0 ||
-			strcasecmp(p_audio_config->achan[c].mycall, "N0CALL") == 0) {
+			strlen(p_audio_config->mycall[c]) == 0 || 
+			strcasecmp(p_audio_config->mycall[c], "NOCALL") == 0 ||
+			strcasecmp(p_audio_config->mycall[c], "N0CALL") == 0) {
 
-	          strlcpy (p_audio_config->achan[c].mycall, t, sizeof(p_audio_config->achan[c].mycall));
+	          strlcpy (p_audio_config->mycall[c], t, sizeof(p_audio_config->mycall[c]));
 	        }
 	      }
 	    }
@@ -1332,6 +1451,12 @@ void config_init (char *fname, struct audio_s *p_audio_config,
  */
 
 	  else if (strcasecmp(t, "MODEM") == 0) {
+
+	    if (channel < 0 || channel >= MAX_RADIO_CHANS) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: MODEM can only be used with radio channel 0 - %d.\n", line, MAX_RADIO_CHANS-1);
+	      continue;
+	    }
 	    int n;
 	    t = split(NULL,0);
 	    if (t == NULL) {
@@ -1340,17 +1465,17 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	      continue;
 	    }
 	    if (strcasecmp(t,"AIS") == 0) {
-	      n = MAX_BAUD-1;	// Hack - See special case later.
+	      n = BAUD_SENTINEL_AIS;	// Hack - See special case later.
 	    }
 	    else if (strcasecmp(t,"EAS") == 0) {
-	      n = MAX_BAUD-2;	// Hack - See special case later.
+	      n = BAUD_SENTINEL_EAS;	// Hack - See special case later.
 	    }
 	    else {
 	      n = atoi(t);
 	    }
             if (n >= MIN_BAUD && n <= MAX_BAUD) {
 	      p_audio_config->achan[channel].baud = n;
-	      if (n != 300 && n != 1200 && n != 2400 && n != 4800 && n != 9600 && n != 19200 && n != MAX_BAUD-1 && n != MAX_BAUD-2) {
+	      if (n != 300 && n != 1200 && n != 2400 && n != 4800 && n != 9600 && n != 19200 && n != BAUD_SENTINEL_AIS && n != BAUD_SENTINEL_EAS) {
 	        text_color_set(DW_COLOR_ERROR);
 	        dw_printf ("Line %d: Warning: Non-standard data rate of %d bits per second.  Are you sure?\n", line, n);
     	      }
@@ -1389,21 +1514,22 @@ void config_init (char *fname, struct audio_s *p_audio_config,
               p_audio_config->achan[channel].mark_freq = 0;
               p_audio_config->achan[channel].space_freq = 0;
 	    }
-	    else if (p_audio_config->achan[channel].baud == MAX_BAUD-1) {
+	    else if (p_audio_config->achan[channel].baud == BAUD_SENTINEL_AIS) {
               p_audio_config->achan[channel].modem_type = MODEM_AIS;
+	      p_audio_config->achan[channel].baud = 9600;
               p_audio_config->achan[channel].mark_freq = 0;
               p_audio_config->achan[channel].space_freq = 0;
 	    }
-	    else if (p_audio_config->achan[channel].baud == MAX_BAUD-2) {
+	    else if (p_audio_config->achan[channel].baud == BAUD_SENTINEL_EAS) {
 	      p_audio_config->achan[channel].modem_type = MODEM_EAS;
 	      p_audio_config->achan[channel].baud = 521;	// Actually 520.83 but we have an integer field here.
 								// Will make more precise in afsk demod init.
 	      p_audio_config->achan[channel].mark_freq = 2083;	// Actually 2083.3 - logic 1.
 	      p_audio_config->achan[channel].space_freq = 1563;	// Actually 1562.5 - logic 0.
-	      // ? strlcpy (p_audio_config->achan[channel].profiles, "A", sizeof(p_audio_config->achan[channel].profiles));
+	      strlcpy (p_audio_config->achan[channel].profiles, "A", sizeof(p_audio_config->achan[channel].profiles));
 	    }
 	    else {
-              p_audio_config->achan[channel].modem_type = MODEM_SCRAMBLE;
+              p_audio_config->achan[channel].modem_type = MODEM_SCRAMBLE;	// Commonly knowa as G3RUH.
               p_audio_config->achan[channel].mark_freq = 0;
               p_audio_config->achan[channel].space_freq = 0;
 	    }
@@ -1667,6 +1793,11 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 
 
 	  else if (strcasecmp(t, "DTMF") == 0) {
+	    if (channel < 0 || channel >= MAX_RADIO_CHANS) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: DTMF can only be used with radio channel 0 - %d.\n", line, MAX_RADIO_CHANS-1);
+	      continue;
+	    }
 
 	    p_audio_config->achan[channel].dtmf_decode = DTMF_DECODE_ON;
 
@@ -1682,6 +1813,11 @@ void config_init (char *fname, struct audio_s *p_audio_config,
  */
 
 	  else if (strcasecmp(t, "FIX_BITS") == 0) {
+	    if (channel < 0 || channel >= MAX_RADIO_CHANS) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: FIX_BITS can only be used with radio channel 0 - %d.\n", line, MAX_RADIO_CHANS-1);
+	      continue;
+	    }
 	    int n;
 	    t = split(NULL,0);
 	    if (t == NULL) {
@@ -1760,6 +1896,11 @@ void config_init (char *fname, struct audio_s *p_audio_config,
  */
 
 	  else if (strcasecmp(t, "PTT") == 0 || strcasecmp(t, "DCD") == 0 || strcasecmp(t, "CON") == 0) {
+	    if (channel < 0 || channel >= MAX_RADIO_CHANS) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: PTT can only be used with radio channel 0 - %d.\n", line, MAX_RADIO_CHANS-1);
+	      continue;
+	    }
 	    int ot;
 	    char otname[8];
 
@@ -1809,6 +1950,69 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	      }
 	      p_audio_config->achan[channel].octrl[ot].ptt_method = PTT_METHOD_GPIO;
 #endif
+	    }
+	    else if (strcasecmp(t, "GPIOD") == 0) {
+#if __WIN32__
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Config file line %d: %s with GPIOD is only available on Linux.\n", line, otname);
+#else		
+#if defined(USE_GPIOD)
+	      t = split(NULL,0);
+	      if (t == NULL) {
+	        text_color_set(DW_COLOR_ERROR);
+	        dw_printf ("Config file line %d: Missing GPIO chip name for %s.\n", line, otname);
+	        dw_printf ("Use the \"gpioinfo\" command to get a list of gpio chip names and corresponding I/O lines.\n");
+	        continue;
+	      }
+
+	      // Issue 590.  Originally we used the chip name, like gpiochip3, and fed it into
+	      // gpiod_chip_open_by_name.   This function has disappeared in Debian 13 Trixie.
+	      // We must now specify the full device path, like /dev/gpiochip3, for the only
+	      // remaining open function gpiod_chip_open.
+	      // We will allow the user to specify either the name or full device path.
+	      // While we are here, also allow only the number as used by the gpiod utilities.
+
+	      if (t[0] == '/') {	// Looks like device path.  Use as given.
+	        strlcpy(p_audio_config->achan[channel].octrl[ot].out_gpio_name, t, 
+	              sizeof(p_audio_config->achan[channel].octrl[ot].out_gpio_name));
+	      }
+
+	      else if (isdigit(t[0])) {		// or if digit, prepend "/dev/gpiochip"
+	        strlcpy(p_audio_config->achan[channel].octrl[ot].out_gpio_name, "/dev/gpiochip", 
+	              sizeof(p_audio_config->achan[channel].octrl[ot].out_gpio_name));
+	        strlcat(p_audio_config->achan[channel].octrl[ot].out_gpio_name, t, 
+	              sizeof(p_audio_config->achan[channel].octrl[ot].out_gpio_name));
+	      }
+
+	      else {		// otherwise, prepend "/dev/" to the name
+	        strlcpy(p_audio_config->achan[channel].octrl[ot].out_gpio_name, "/dev/", 
+	              sizeof(p_audio_config->achan[channel].octrl[ot].out_gpio_name));
+	        strlcat(p_audio_config->achan[channel].octrl[ot].out_gpio_name, t, 
+	              sizeof(p_audio_config->achan[channel].octrl[ot].out_gpio_name));
+	      }
+
+	      t = split(NULL,0);
+	      if (t == NULL) {
+	        text_color_set(DW_COLOR_ERROR);
+	        dw_printf("Config file line %d: Missing GPIO number for %s.\n", line, otname);
+	        continue;
+	      }
+
+	      if (*t == '-') {
+	        p_audio_config->achan[channel].octrl[ot].out_gpio_num = atoi(t+1);
+		p_audio_config->achan[channel].octrl[ot].ptt_invert = 1;
+	      }
+	      else {
+	        p_audio_config->achan[channel].octrl[ot].out_gpio_num = atoi(t);
+		p_audio_config->achan[channel].octrl[ot].ptt_invert = 0;
+	      }
+	      p_audio_config->achan[channel].octrl[ot].ptt_method = PTT_METHOD_GPIOD;
+#else
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Application was not built with optional support for GPIOD.\n");
+	      dw_printf ("Install packages gpiod and libgpiod-dev, remove 'build' subdirectory, then rebuild.\n");
+#endif /* USE_GPIOD*/
+#endif /* __WIN32__ */
 	    }
 	    else if (strcasecmp(t, "LPT") == 0) {
 
@@ -2092,6 +2296,11 @@ void config_init (char *fname, struct audio_s *p_audio_config,
  */
 
 	  else if (strcasecmp(t, "TXINH") == 0) {
+	    if (channel < 0 || channel >= MAX_RADIO_CHANS) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: TXINH can only be used with radio channel 0 - %d.\n", line, MAX_RADIO_CHANS-1);
+	      continue;
+	    }
 	    char itname[8];
 
 	    strlcpy (itname, "TXINH", sizeof(itname));
@@ -2132,9 +2341,17 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 
 /*
  * DWAIT n		- Extra delay for receiver squelch. n = 10 mS units.
+ *
+ * Why did I do this?  Just add more to TXDELAY.
+ * Now undocumented in User Guide.  Might disappear someday.
  */
 
 	  else if (strcasecmp(t, "DWAIT") == 0) {
+	    if (channel < 0 || channel >= MAX_RADIO_CHANS) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: DWAIT can only be used with radio channel 0 - %d.\n", line, MAX_RADIO_CHANS-1);
+	      continue;
+	    }
 	    int n;
 	    t = split(NULL,0);
 	    if (t == NULL) {
@@ -2159,6 +2376,11 @@ void config_init (char *fname, struct audio_s *p_audio_config,
  */
 
 	  else if (strcasecmp(t, "SLOTTIME") == 0) {
+	    if (channel < 0 || channel >= MAX_RADIO_CHANS) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: SLOTTIME can only be used with radio channel 0 - %d.\n", line, MAX_RADIO_CHANS-1);
+	      continue;
+	    }
 	    int n;
 	    t = split(NULL,0);
 	    if (t == NULL) {
@@ -2167,14 +2389,20 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	      continue;
 	    }
 	    n = atoi(t);
-            if (n >= 0 && n <= 255) {
+            if (n >= 5 && n < 50) {
+	      // 0 = User has no clue.  This would be no delay.
+	      // 10 = Default.
+	      // 50 = Half second.  User might think it is mSec and use 100.
 	      p_audio_config->achan[channel].slottime = n;
 	    }
 	    else {
 	      p_audio_config->achan[channel].slottime = DEFAULT_SLOTTIME;
 	      text_color_set(DW_COLOR_ERROR);
-              dw_printf ("Line %d: Invalid delay time for persist algorithm. Using %d.\n", 
+              dw_printf ("Line %d: Invalid delay time for persist algorithm. Using default %d.\n",
 			line, p_audio_config->achan[channel].slottime);
+              dw_printf ("Read the Dire Wolf User Guide, \"Radio Channel - Transmit Timing\"\n");
+              dw_printf ("section, to understand what this means.\n");
+              dw_printf ("Why don't you just use the default?\n");
    	    }
 	  }
 
@@ -2183,6 +2411,11 @@ void config_init (char *fname, struct audio_s *p_audio_config,
  */
 
 	  else if (strcasecmp(t, "PERSIST") == 0) {
+	    if (channel < 0 || channel >= MAX_RADIO_CHANS) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: PERSIST can only be used with radio channel 0 - %d.\n", line, MAX_RADIO_CHANS-1);
+	      continue;
+	    }
 	    int n;
 	    t = split(NULL,0);
 	    if (t == NULL) {
@@ -2191,14 +2424,17 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	      continue;
 	    }
 	    n = atoi(t);
-            if (n >= 0 && n <= 255) {
+            if (n >= 5 && n <= 250) {
 	      p_audio_config->achan[channel].persist = n;
 	    }
 	    else {
 	      p_audio_config->achan[channel].persist = DEFAULT_PERSIST;
 	      text_color_set(DW_COLOR_ERROR);
-              dw_printf ("Line %d: Invalid probability for persist algorithm. Using %d.\n", 
+              dw_printf ("Line %d: Invalid probability for persist algorithm. Using default %d.\n",
 			line, p_audio_config->achan[channel].persist);
+              dw_printf ("Read the Dire Wolf User Guide, \"Radio Channel - Transmit Timing\"\n");
+              dw_printf ("section, to understand what this means.\n");
+              dw_printf ("Why don't you just use the default?\n");
    	    }
 	  }
 
@@ -2207,6 +2443,11 @@ void config_init (char *fname, struct audio_s *p_audio_config,
  */
 
 	  else if (strcasecmp(t, "TXDELAY") == 0) {
+	    if (channel < 0 || channel >= MAX_RADIO_CHANS) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: TXDELAY can only be used with radio channel 0 - %d.\n", line, MAX_RADIO_CHANS-1);
+	      continue;
+	    }
 	    int n;
 	    t = split(NULL,0);
 	    if (t == NULL) {
@@ -2216,6 +2457,23 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	    }
 	    n = atoi(t);
             if (n >= 0 && n <= 255) {
+	      text_color_set(DW_COLOR_ERROR);
+	      if (n < 10) {
+                dw_printf ("Line %d: Setting TXDELAY this small is a REALLY BAD idea if you want other stations to hear you.\n", 
+			line);
+                dw_printf ("Read the Dire Wolf User Guide, \"Radio Channel - Transmit Timing\"\n");
+                dw_printf ("section, to understand what this means.\n");
+                dw_printf ("Why don't you just use the default rather than reducing reliability?\n");
+	      }
+	      else if (n >= 100) {
+                dw_printf ("Line %d: Keeping with tradition, going back to the 1980s, TXDELAY is in 10 millisecond units.\n", 
+			line);
+                dw_printf ("Line %d: The value %d would be %.3f seconds which seems rather excessive.  Are you sure you want that?\n", 
+			line, n, (double)n * 10. / 1000.);
+                dw_printf ("Read the Dire Wolf User Guide, \"Radio Channel - Transmit Timing\"\n");
+                dw_printf ("section, to understand what this means.\n");
+                dw_printf ("Why don't you just use the default?\n");
+	      }
 	      p_audio_config->achan[channel].txdelay = n;
 	    }
 	    else {
@@ -2231,6 +2489,11 @@ void config_init (char *fname, struct audio_s *p_audio_config,
  */
 
 	  else if (strcasecmp(t, "TXTAIL") == 0) {
+	    if (channel < 0 || channel >= MAX_RADIO_CHANS) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: TXTAIL can only be used with radio channel 0 - %d.\n", line, MAX_RADIO_CHANS-1);
+	      continue;
+	    }
 	    int n;
 	    t = split(NULL,0);
 	    if (t == NULL) {
@@ -2240,12 +2503,28 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	    }
 	    n = atoi(t);
             if (n >= 0 && n <= 255) {
+	      if (n < 5) {
+                dw_printf ("Line %d: Setting TXTAIL that small is a REALLY BAD idea if you want other stations to hear you.\n", 
+			line);
+                dw_printf ("Read the Dire Wolf User Guide, \"Radio Channel - Transmit Timing\"\n");
+                dw_printf ("section, to understand what this means.\n");
+                dw_printf ("Why don't you just use the default rather than reducing reliability?\n");
+	      }
+	      else if (n >= 50) {
+                dw_printf ("Line %d: Keeping with tradition, going back to the 1980s, TXTAIL is in 10 millisecond units.\n", 
+			line);
+                dw_printf ("Line %d: The value %d would be %.3f seconds which seems rather excessive.  Are you sure you want that?\n", 
+			line, n, (double)n * 10. / 1000.);
+                dw_printf ("Read the Dire Wolf User Guide, \"Radio Channel - Transmit Timing\"\n");
+                dw_printf ("section, to understand what this means.\n");
+                dw_printf ("Why don't you just use the default?\n");
+	      }
 	      p_audio_config->achan[channel].txtail = n;
 	    }
 	    else {
 	      p_audio_config->achan[channel].txtail = DEFAULT_TXTAIL;
 	      text_color_set(DW_COLOR_ERROR);
-              dw_printf ("Line %d: Invalid time for transmit timing. Using %d.\n", 
+              dw_printf ("Line %d: Invalid time for transmit timing. Using %d.\n",
 			line, p_audio_config->achan[channel].txtail);
    	    }
 	  }
@@ -2255,6 +2534,11 @@ void config_init (char *fname, struct audio_s *p_audio_config,
  */
 	  else if (strcasecmp(t, "FULLDUP") == 0) {
 
+	    if (channel < 0 || channel >= MAX_RADIO_CHANS) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: FULLDUP can only be used with radio channel 0 - %d.\n", line, MAX_RADIO_CHANS-1);
+	      continue;
+	    }
 	    t = split(NULL,0);
 	    if (t == NULL) {
 	      text_color_set(DW_COLOR_ERROR);
@@ -2282,6 +2566,11 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 
 	  else if (strcasecmp(t, "SPEECH") == 0) {
 
+	    if (channel < 0 || channel >= MAX_RADIO_CHANS) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: SPEECH can only be used with radio channel 0 - %d.\n", line, MAX_RADIO_CHANS-1);
+	      continue;
+	    }
 	    t = split(NULL,0);
 	    if (t == NULL) {
 	      text_color_set(DW_COLOR_ERROR);
@@ -2313,6 +2602,11 @@ void config_init (char *fname, struct audio_s *p_audio_config,
  */
 
 	  else if (strcasecmp(t, "FX25TX") == 0) {
+	    if (channel < 0 || channel >= MAX_RADIO_CHANS) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: FX25TX can only be used with radio channel 0 - %d.\n", line, MAX_RADIO_CHANS-1);
+	      continue;
+	    }
 	    int n;
 	    t = split(NULL,0);
 	    if (t == NULL) {
@@ -2335,7 +2629,7 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	  }
 
 /*
- * FX25AUTO n		- Enable Automatic use of FX.25 for connected mode.
+ * FX25AUTO n		- Enable Automatic use of FX.25 for connected mode.  *** Not Implemented ***
  *				Automatically enable, for that session only, when an identical
  *				frame is sent more than this number of times.
  *				Default 5 based on half of default RETRY.
@@ -2344,6 +2638,11 @@ void config_init (char *fname, struct audio_s *p_audio_config,
  */
 
 	  else if (strcasecmp(t, "FX25AUTO") == 0) {
+	    if (channel < 0 || channel >= MAX_RADIO_CHANS) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: FX25AUTO can only be used with radio channel 0 - %d.\n", line, MAX_RADIO_CHANS-1);
+	      continue;
+	    }
 	    int n;
 	    t = split(NULL,0);
 	    if (t == NULL) {
@@ -2375,6 +2674,11 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 
 	  else if (strcasecmp(t, "IL2PTX") == 0) {
 
+	    if (channel < 0 || channel >= MAX_RADIO_CHANS) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: IL2PTX can only be used with radio channel 0 - %d.\n", line, MAX_RADIO_CHANS-1);
+	      continue;
+	    }
 	    p_audio_config->achan[channel].layer2_xmit = LAYER2_IL2P;
 	    p_audio_config->achan[channel].il2p_max_fec = 1;
 	    p_audio_config->achan[channel].il2p_invert_polarity = 0;
@@ -2435,10 +2739,10 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	      continue;
 	    }
 	    from_chan = atoi(t);
-	    if (from_chan < 0 || from_chan >= MAX_CHANS) {
+	    if (from_chan < 0 || from_chan >= MAX_TOTAL_CHANS) {
 	      text_color_set(DW_COLOR_ERROR);
 	      dw_printf ("Config file: FROM-channel must be in range of 0 to %d on line %d.\n", 
-							MAX_CHANS-1, line);
+							MAX_TOTAL_CHANS-1, line);
 	      continue;
 	    }
 
@@ -2465,10 +2769,10 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	      continue;
 	    }
 	    to_chan = atoi(t);
-	    if (to_chan < 0 || to_chan >= MAX_CHANS) {
+	    if (to_chan < 0 || to_chan >= MAX_TOTAL_CHANS) {
 	      text_color_set(DW_COLOR_ERROR);
 	      dw_printf ("Config file: TO-channel must be in range of 0 to %d on line %d.\n", 
-							MAX_CHANS-1, line);
+							MAX_TOTAL_CHANS-1, line);
 	      continue;
 	    }
 
@@ -2596,10 +2900,10 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	      continue;
 	    }
 	    from_chan = atoi(t);
-	    if (from_chan < 0 || from_chan >= MAX_CHANS) {
+	    if (from_chan < 0 || from_chan >= MAX_RADIO_CHANS) {
 	      text_color_set(DW_COLOR_ERROR);
 	      dw_printf ("Config file: FROM-channel must be in range of 0 to %d on line %d.\n", 
-							MAX_CHANS-1, line);
+							MAX_RADIO_CHANS-1, line);
 	      continue;
 	    }
 
@@ -2625,10 +2929,10 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	      continue;
 	    }
 	    to_chan = atoi(t);
-	    if (to_chan < 0 || to_chan >= MAX_CHANS) {
+	    if (to_chan < 0 || to_chan >= MAX_RADIO_CHANS) {
 	      text_color_set(DW_COLOR_ERROR);
 	      dw_printf ("Config file: TO-channel must be in range of 0 to %d on line %d.\n", 
-							MAX_CHANS-1, line);
+							MAX_RADIO_CHANS-1, line);
 	      continue;
 	    }
 	    if (p_audio_config->chan_medium[to_chan] != MEDIUM_RADIO) {
@@ -2670,10 +2974,10 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	      continue;
 	    }
 	    from_chan = atoi(t);
-	    if (from_chan < 0 || from_chan >= MAX_CHANS) {
+	    if (from_chan < 0 || from_chan >= MAX_RADIO_CHANS) {
 	      text_color_set(DW_COLOR_ERROR);
 	      dw_printf ("Config file: FROM-channel must be in range of 0 to %d on line %d.\n",
-							MAX_CHANS-1, line);
+							MAX_RADIO_CHANS-1, line);
 	      continue;
 	    }
 
@@ -2703,10 +3007,10 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	      continue;
 	    }
 	    to_chan = atoi(t);
-	    if (to_chan < 0 || to_chan >= MAX_CHANS) {
+	    if (to_chan < 0 || to_chan >= MAX_RADIO_CHANS) {
 	      text_color_set(DW_COLOR_ERROR);
 	      dw_printf ("Config file: TO-channel must be in range of 0 to %d on line %d.\n",
-							MAX_CHANS-1, line);
+							MAX_RADIO_CHANS-1, line);
 	      continue;
 	    }
 	    if (p_audio_config->chan_medium[to_chan] != MEDIUM_RADIO) {
@@ -2789,20 +3093,20 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	      continue;
 	    }
 	    if (*t == 'i' || *t == 'I') {
-	      from_chan = MAX_CHANS;
+	      from_chan = MAX_TOTAL_CHANS;
 	      text_color_set(DW_COLOR_ERROR);
 	      dw_printf ("Config file: FILTER IG ... on line %d.\n", line);
 	      dw_printf ("Warning! Don't mess with IS>RF filtering unless you are an expert and have an unusual situation.\n");
 	      dw_printf ("Warning! The default is fine for nearly all situations.\n");
-	      dw_printf ("Warning! Be sure to read carefully and understand  Successful-APRS-Gateway-Operation.pdf .\n");
+	      dw_printf ("Warning! Be sure to read carefully and understand  \"Successful-APRS-Gateway-Operation.pdf\" .\n");
 	      dw_printf ("Warning! If you insist, be sure to add \" | i/180 \" so you don't break messaging.\n");
 	    }
 	    else {
 	      from_chan = isdigit(*t) ? atoi(t) : -999;
-	      if (from_chan < 0 || from_chan >= MAX_CHANS) {
+	      if (from_chan < 0 || from_chan >= MAX_TOTAL_CHANS) {
 	        text_color_set(DW_COLOR_ERROR);
 	        dw_printf ("Config file: Filter FROM-channel must be in range of 0 to %d or \"IG\" on line %d.\n", 
-							MAX_CHANS-1, line);
+							MAX_TOTAL_CHANS-1, line);
 	        continue;
 	      }
 
@@ -2828,20 +3132,20 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	      continue;
 	    }
 	    if (*t == 'i' || *t == 'I') {
-	      to_chan = MAX_CHANS;
+	      to_chan = MAX_TOTAL_CHANS;
 	      text_color_set(DW_COLOR_ERROR);
 	      dw_printf ("Config file: FILTER ... IG ... on line %d.\n", line);
 	      dw_printf ("Warning! Don't mess with RF>IS filtering unless you are an expert and have an unusual situation.\n");
 	      dw_printf ("Warning! Expected behavior is for everything to go from RF to IS.\n");
 	      dw_printf ("Warning! The default is fine for nearly all situations.\n");
-	      dw_printf ("Warning! Be sure to read carefully and understand  Successful-APRS-Gateway-Operation.pdf .\n");
+	      dw_printf ("Warning! Be sure to read carefully and understand  \"Successful-APRS-Gateway-Operation.pdf\" .\n");
 	    }
 	    else {
 	      to_chan = isdigit(*t) ? atoi(t) : -999;
-	      if (to_chan < 0 || to_chan >= MAX_CHANS) {
+	      if (to_chan < 0 || to_chan >= MAX_TOTAL_CHANS) {
 	        text_color_set(DW_COLOR_ERROR);
 	        dw_printf ("Config file: Filter TO-channel must be in range of 0 to %d or \"IG\" on line %d.\n", 
-							MAX_CHANS-1, line);
+							MAX_TOTAL_CHANS-1, line);
 	        continue;
 	      }
 	      if (p_audio_config->chan_medium[to_chan] != MEDIUM_RADIO &&
@@ -2903,10 +3207,10 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	    }
 
 	    from_chan = isdigit(*t) ? atoi(t) : -999;
-	    if (from_chan < 0 || from_chan >= MAX_CHANS) {
+	    if (from_chan < 0 || from_chan >= MAX_RADIO_CHANS) {
 	      text_color_set(DW_COLOR_ERROR);
 	      dw_printf ("Config file: Filter FROM-channel must be in range of 0 to %d on line %d.\n",
-							MAX_CHANS-1, line);
+							MAX_RADIO_CHANS-1, line);
 	      continue;
 	    }
 
@@ -2928,10 +3232,10 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	    }
 
 	    to_chan = isdigit(*t) ? atoi(t) : -999;
-	    if (to_chan < 0 || to_chan >= MAX_CHANS) {
+	    if (to_chan < 0 || to_chan >= MAX_RADIO_CHANS) {
 	      text_color_set(DW_COLOR_ERROR);
 	      dw_printf ("Config file: Filter TO-channel must be in range of 0 to %d on line %d.\n",
-							MAX_CHANS-1, line);
+							MAX_RADIO_CHANS-1, line);
 	      continue;
 	    }
             if (p_audio_config->chan_medium[to_chan] != MEDIUM_RADIO) {
@@ -4088,10 +4392,10 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	    }
 
 	    r = atoi(t);
-	    if (r < 0 || r > MAX_CHANS-1) {
+	    if (r < 0 || r > MAX_RADIO_CHANS-1) {
 	      text_color_set(DW_COLOR_ERROR);
 	      dw_printf ("Config file: DTMF receive channel must be in range of 0 to %d on line %d.\n", 
-							MAX_CHANS-1, line);
+							MAX_RADIO_CHANS-1, line);
 	      continue;
 	    }
 
@@ -4119,9 +4423,9 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 
 	      if (isdigit(*p)) {
 	        x = *p - '0';
-	        if (x < 0 || x > MAX_CHANS-1) {
+	        if (x < 0 || x > MAX_TOTAL_CHANS-1) {
 	          text_color_set(DW_COLOR_ERROR);
-	          dw_printf ("Config file: Transmit channel must be in range of 0 to %d on line %d.\n", MAX_CHANS-1, line);
+	          dw_printf ("Config file: Transmit channel must be in range of 0 to %d on line %d.\n", MAX_TOTAL_CHANS-1, line);
 	          x = -1;
 	        }
 	        else if (p_audio_config->chan_medium[x] != MEDIUM_RADIO &&
@@ -4321,13 +4625,25 @@ void config_init (char *fname, struct audio_s *p_audio_config,
  * IGSERVER  hostname [ port ] 				-- original implementation.
  *
  * IGSERVER  hostname:port				-- more in line with usual conventions.
+ *
+ * Beginning in version 1.8 we will also recognize CWOPSERVER.
+ * The only difference, in this file, is that we set cwop_mode.
+ * Of course the IGate code acts quite differently.
  */
 
-	  else if (strcasecmp(t, "IGSERVER") == 0) {
+	  else if (strcasecmp(t, "IGSERVER") == 0 || strcasecmp(t, "CWOPSERVER") == 0) {
+	    if (strcasecmp(t, "CWOPSERVER") == 0) {
+	      p_igate_config->cwop_mode = 1;
+	    }
 	    t = split(NULL,0);
 	    if (t == NULL) {
 	      text_color_set(DW_COLOR_ERROR);
 	      dw_printf ("Line %d: Missing IGate server name for IGSERVER command.\n", line);
+	      continue;
+	    }
+	    if (strlen(p_igate_config->t2_server_name) > 0) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: Only one of IGSERVER and CWOPSERVER can be specified.\n", line);
 	      continue;
 	    }
 	    strlcpy (p_igate_config->t2_server_name, t, sizeof(p_igate_config->t2_server_name));
@@ -4411,10 +4727,10 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	    }
 
 	    n = atoi(t);
-	    if (n < 0 || n > MAX_CHANS-1) {
+	    if (n < 0 || n > MAX_TOTAL_CHANS-1) {
 	      text_color_set(DW_COLOR_ERROR);
 	      dw_printf ("Config file: Transmit channel must be in range of 0 to %d on line %d.\n", 
-							MAX_CHANS-1, line);
+							MAX_TOTAL_CHANS-1, line);
 	      continue;
 	    }
 	    p_igate_config->tx_chan = n;
@@ -4470,6 +4786,13 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 
 	    if (t != NULL && strlen(t) > 0) {
 	      p_igate_config->t2_filter = strdup (t);
+
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: Warning - IGFILTER is a rarely needed expert level feature.\n", line);
+	      dw_printf ("If you don't have a special situation and a good understanding of\n");
+	      dw_printf ("how this works, you probably should not be messing with it.\n");
+	      dw_printf ("The default behavior is appropriate for most situations.\n");
+	      dw_printf ("Please read \"Successful-APRS-IGate-Operation.pdf\".\n");
 	    }
 	  }
 
@@ -4561,32 +4884,16 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 
 
 /*
- * SATGATE 		- Special SATgate mode to delay packets heard directly.
+ * SATGATE 		- Turned out to be not such a good idea.
  *
  * SATGATE [ n ]
  */
 
 	  else if (strcasecmp(t, "SATGATE") == 0) {
 
-	    text_color_set(DW_COLOR_INFO);
-	    dw_printf ("Line %d: SATGATE is pretty useless and will be removed in a future version.\n", line);
+	    text_color_set(DW_COLOR_ERROR);
+	    dw_printf ("Line %d: See User Guide for SATgate suggestions.\n", line);
 
-	    t = split(NULL,0);
-	    if (t != NULL) {
-
-	      int n = atoi(t);
-              if (n >= MIN_SATGATE_DELAY && n <= MAX_SATGATE_DELAY) {
-	        p_igate_config->satgate_delay = n;
-	      }
-	      else {
-	        p_igate_config->satgate_delay = DEFAULT_SATGATE_DELAY;
-	        text_color_set(DW_COLOR_ERROR);
-                dw_printf ("Line %d: Unreasonable SATgate delay.  Using default.\n", line);
-	      }
-	    }
-	    else {
-	      p_igate_config->satgate_delay = DEFAULT_SATGATE_DELAY;
-	    }
 	  }
 
 
@@ -4673,9 +4980,9 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	    t = split(NULL,0);
 	    if (t != NULL) {
 	      chan = atoi(t);
-	      if (chan < 0 || chan >= MAX_CHANS) {
+	      if (chan < 0 || chan >= MAX_TOTAL_CHANS) {
 	        text_color_set(DW_COLOR_ERROR);
-	        dw_printf ("Line %d: Invalid channel %d for KISSPORT command.  Must be in range 0 thru %d.\n", line, chan, MAX_CHANS-1);
+	        dw_printf ("Line %d: Invalid channel %d for KISSPORT command.  Must be in range 0 thru %d.\n", line, chan, MAX_TOTAL_CHANS-1);
 	        continue;
 	      }
 	    }
@@ -5386,25 +5693,25 @@ void config_init (char *fname, struct audio_s *p_audio_config,
  */
 	int i, j, k, b;
 
-	for (i=0; i<MAX_CHANS; i++) {
-	  for (j=0; j<MAX_CHANS; j++) {
+	for (i=0; i<MAX_TOTAL_CHANS; i++) {
+	  for (j=0; j<MAX_TOTAL_CHANS; j++) {
 
 /* APRS digipeating. */
 
 	    if (p_digi_config->enabled[i][j]) {
 
-	      if ( strcmp(p_audio_config->achan[i].mycall, "") == 0 || 
-		   strcmp(p_audio_config->achan[i].mycall, "NOCALL") == 0 || 
-		   strcmp(p_audio_config->achan[i].mycall, "N0CALL") == 0) {
+	      if ( strcmp(p_audio_config->mycall[i], "") == 0 ||
+		   strcmp(p_audio_config->mycall[i], "NOCALL") == 0 ||
+		   strcmp(p_audio_config->mycall[i], "N0CALL") == 0) {
 
 	        text_color_set(DW_COLOR_ERROR);
 	        dw_printf ("Config file: MYCALL must be set for receive channel %d before digipeating is allowed.\n", i);
 	        p_digi_config->enabled[i][j] = 0;
 	      }
 
-	      if ( strcmp(p_audio_config->achan[j].mycall, "") == 0 || 
-	           strcmp(p_audio_config->achan[j].mycall, "NOCALL") == 0 ||
-		   strcmp(p_audio_config->achan[j].mycall, "N0CALL") == 0) {
+	      if ( strcmp(p_audio_config->mycall[j], "") == 0 ||
+	           strcmp(p_audio_config->mycall[j], "NOCALL") == 0 ||
+		   strcmp(p_audio_config->mycall[j], "N0CALL") == 0) {
 
 	        text_color_set(DW_COLOR_ERROR);
 	        dw_printf ("Config file: MYCALL must be set for transmit channel %d before digipeating is allowed.\n", i); 
@@ -5426,20 +5733,20 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 
 /* Connected mode digipeating. */
 
-	    if (p_cdigi_config->enabled[i][j]) {
+	    if (i < MAX_RADIO_CHANS && j < MAX_RADIO_CHANS && p_cdigi_config->enabled[i][j]) {
 
-	      if ( strcmp(p_audio_config->achan[i].mycall, "") == 0 ||
-		   strcmp(p_audio_config->achan[i].mycall, "NOCALL") == 0 ||
-		   strcmp(p_audio_config->achan[i].mycall, "N0CALL") == 0) {
+	      if ( strcmp(p_audio_config->mycall[i], "") == 0 ||
+		   strcmp(p_audio_config->mycall[i], "NOCALL") == 0 ||
+		   strcmp(p_audio_config->mycall[i], "N0CALL") == 0) {
 
 	        text_color_set(DW_COLOR_ERROR);
 	        dw_printf ("Config file: MYCALL must be set for receive channel %d before digipeating is allowed.\n", i);
 	        p_cdigi_config->enabled[i][j] = 0;
 	      }
 
-	      if ( strcmp(p_audio_config->achan[j].mycall, "") == 0 ||
-	           strcmp(p_audio_config->achan[j].mycall, "NOCALL") == 0 ||
-		   strcmp(p_audio_config->achan[j].mycall, "N0CALL") == 0) {
+	      if ( strcmp(p_audio_config->mycall[j], "") == 0 ||
+	           strcmp(p_audio_config->mycall[j], "NOCALL") == 0 ||
+		   strcmp(p_audio_config->mycall[j], "N0CALL") == 0) {
 
 	        text_color_set(DW_COLOR_ERROR);
 	        dw_printf ("Config file: MYCALL must be set for transmit channel %d before digipeating is allowed.\n", i);
@@ -5463,7 +5770,7 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	  if (strlen(p_igate_config->t2_login) > 0 &&
 	      (p_audio_config->chan_medium[i] == MEDIUM_RADIO || p_audio_config->chan_medium[i] == MEDIUM_NETTNC)) {
 
-	    if (strcmp(p_audio_config->achan[i].mycall, "NOCALL") == 0  || strcmp(p_audio_config->achan[i].mycall, "N0CALL") == 0) {
+	    if (strcmp(p_audio_config->mycall[i], "NOCALL") == 0  || strcmp(p_audio_config->mycall[i], "N0CALL") == 0) {
 	      text_color_set(DW_COLOR_ERROR);
 	      dw_printf ("Config file: MYCALL must be set for receive channel %d before Rx IGate is allowed.\n", i);
 	      strlcpy (p_igate_config->t2_login, "", sizeof(p_igate_config->t2_login));
@@ -5471,9 +5778,9 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	    // Currently we can have only one transmit channel.
 	    // This might be generalized someday to allow more.
 	    if (p_igate_config->tx_chan >= 0 && 
-			( strcmp(p_audio_config->achan[p_igate_config->tx_chan].mycall, "") == 0 ||
-		          strcmp(p_audio_config->achan[p_igate_config->tx_chan].mycall, "NOCALL") == 0 ||
-			  strcmp(p_audio_config->achan[p_igate_config->tx_chan].mycall, "N0CALL") == 0)) {
+			( strcmp(p_audio_config->mycall[p_igate_config->tx_chan], "") == 0 ||
+		          strcmp(p_audio_config->mycall[p_igate_config->tx_chan], "NOCALL") == 0 ||
+			  strcmp(p_audio_config->mycall[p_igate_config->tx_chan], "N0CALL") == 0)) {
 
 	      text_color_set(DW_COLOR_ERROR);
 	      dw_printf ("Config file: MYCALL must be set for transmit channel %d before Tx IGate is allowed.\n", i);
@@ -5486,10 +5793,10 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 // This will handle eventual case of multiple transmit channels.
 
 	if (strlen(p_igate_config->t2_login) > 0) {
-	  for (j=0; j<MAX_CHANS; j++) {
+	  for (j=0; j<MAX_TOTAL_CHANS; j++) {
 	    if (p_audio_config->chan_medium[j] == MEDIUM_RADIO || p_audio_config->chan_medium[j] == MEDIUM_NETTNC) {
-	      if (p_digi_config->filter_str[MAX_CHANS][j] == NULL) {
-	        p_digi_config->filter_str[MAX_CHANS][j] = strdup("i/180");
+	      if (p_digi_config->filter_str[MAX_TOTAL_CHANS][j] == NULL) {
+	        p_digi_config->filter_str[MAX_TOTAL_CHANS][j] = strdup("i/180");
 	      }
 	    }
 	  }
@@ -5622,7 +5929,7 @@ static int beacon_options(char *cmd, struct beacon_s *b, int line, struct audio_
 	    }
 	    else if (value[0] == 'r' || value[0] == 'R') {
 	       int n = atoi(value+1);
-	       if (( n < 0 || n >= MAX_CHANS || p_audio_config->chan_medium[n] == MEDIUM_NONE)
+	       if (( n < 0 || n >= MAX_TOTAL_CHANS || p_audio_config->chan_medium[n] == MEDIUM_NONE)
 			&& p_audio_config->chan_medium[n] != MEDIUM_IGATE) {
 	         text_color_set(DW_COLOR_ERROR);
 	         dw_printf ("Config file, line %d: Simulated receive on channel %d is not valid.\n", line, n);
@@ -5633,7 +5940,7 @@ static int beacon_options(char *cmd, struct beacon_s *b, int line, struct audio_
 	    }
 	    else if (value[0] == 't' || value[0] == 'T' || value[0] == 'x' || value[0] == 'X') {
 	      int n = atoi(value+1);
-	      if (( n < 0 || n >= MAX_CHANS || p_audio_config->chan_medium[n] == MEDIUM_NONE)
+	      if (( n < 0 || n >= MAX_TOTAL_CHANS || p_audio_config->chan_medium[n] == MEDIUM_NONE)
 			&& p_audio_config->chan_medium[n] != MEDIUM_IGATE) {
 	        text_color_set(DW_COLOR_ERROR);
 	        dw_printf ("Config file, line %d: Send to channel %d is not valid.\n", line, n);
@@ -5645,7 +5952,7 @@ static int beacon_options(char *cmd, struct beacon_s *b, int line, struct audio_
 	    }
 	    else {
 	       int n = atoi(value);
-	       if (( n < 0 || n >= MAX_CHANS || p_audio_config->chan_medium[n] == MEDIUM_NONE)
+	       if (( n < 0 || n >= MAX_TOTAL_CHANS || p_audio_config->chan_medium[n] == MEDIUM_NONE)
 			&& p_audio_config->chan_medium[n] != MEDIUM_IGATE) {
 	         text_color_set(DW_COLOR_ERROR);
 	         dw_printf ("Config file, line %d: Send to channel %d is not valid.\n", line, n);
@@ -5896,7 +6203,7 @@ static int beacon_options(char *cmd, struct beacon_s *b, int line, struct audio_
 
 	if (b->sendto_type == SENDTO_XMIT) {
 
-	  if (( b->sendto_chan < 0 || b->sendto_chan >= MAX_CHANS || p_audio_config->chan_medium[b->sendto_chan] == MEDIUM_NONE)
+	  if (( b->sendto_chan < 0 || b->sendto_chan >= MAX_TOTAL_CHANS || p_audio_config->chan_medium[b->sendto_chan] == MEDIUM_NONE)
 		&& p_audio_config->chan_medium[b->sendto_chan] != MEDIUM_IGATE) {
 	    text_color_set(DW_COLOR_ERROR);
 	    dw_printf ("Config file, line %d: Send to channel %d is not valid.\n", line, b->sendto_chan);
@@ -5905,18 +6212,18 @@ static int beacon_options(char *cmd, struct beacon_s *b, int line, struct audio_
 
 	  if (p_audio_config->chan_medium[b->sendto_chan] == MEDIUM_IGATE) {  // Prevent subscript out of bounds.
 									     // Will be using call from chan 0 later.
-	    if ( strcmp(p_audio_config->achan[0].mycall, "") == 0 || 
-	         strcmp(p_audio_config->achan[0].mycall, "NOCALL") == 0 || 
-	         strcmp(p_audio_config->achan[0].mycall, "N0CALL") == 0 ) {
+	    if ( strcmp(p_audio_config->mycall[0], "") == 0 ||
+	         strcmp(p_audio_config->mycall[0], "NOCALL") == 0 ||
+	         strcmp(p_audio_config->mycall[0], "N0CALL") == 0 ) {
 
 	      text_color_set(DW_COLOR_ERROR);
 	      dw_printf ("Config file: MYCALL must be set for channel %d before beaconing is allowed.\n", 0); 
 	      return (0);
 	    }
 	  } else {
-	    if ( strcmp(p_audio_config->achan[b->sendto_chan].mycall, "") == 0 || 
-	         strcmp(p_audio_config->achan[b->sendto_chan].mycall, "NOCALL") == 0 || 
-	         strcmp(p_audio_config->achan[b->sendto_chan].mycall, "N0CALL") == 0 ) {
+	    if ( strcmp(p_audio_config->mycall[b->sendto_chan], "") == 0 ||
+	         strcmp(p_audio_config->mycall[b->sendto_chan], "NOCALL") == 0 ||
+	         strcmp(p_audio_config->mycall[b->sendto_chan], "N0CALL") == 0 ) {
 
 	      text_color_set(DW_COLOR_ERROR);
 	      dw_printf ("Config file: MYCALL must be set for channel %d before beaconing is allowed.\n", b->sendto_chan); 

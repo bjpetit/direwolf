@@ -1,7 +1,7 @@
 //
 //    This file is part of Dire Wolf, an amateur radio packet TNC.
 //
-//    Copyright (C) 2013, 2014, 2015, 2016, 2023  John Langner, WB2OSZ
+//    Copyright (C) 2013, 2014, 2015, 2016, 2023, 2025  John Langner, WB2OSZ
 //
 //    This program is free software: you can redistribute it and/or modify
 //    it under the terms of the GNU General Public License as published by
@@ -26,6 +26,7 @@
  *		
  * Description:	Establish connection with a tier 2 IGate server
  *		and relay packets between RF and Internet.
+ *		In version 1.8 we add capability to gather from multiple CWOP servers.
  *
  * References:	APRS-IS (Automatic Packet Reporting System-Internet Service)
  *		http://www.aprs-is.net/Default.aspx
@@ -47,7 +48,7 @@
  *
  * From http://windows.microsoft.com/en-us/windows7/ipv6-frequently-asked-questions
  * 
- * How can I enable IPv6?
+ * How can I enable IPv6 for Windows 7?
  * Follow these steps:
  * 
  * Open Network Connections by clicking the Start button, and then clicking 
@@ -65,7 +66,6 @@
 /*
  * Native Windows:	Use the Winsock interface.
  * Linux:		Use the BSD socket interface.
- * Cygwin:		Can use either one.
  */
 
 #include "direwolf.h"		// Sets _WIN32_WINNT for XP API level needed by ws2tcpip.h
@@ -93,6 +93,8 @@
 #include <assert.h>
 #include <string.h>
 #include <time.h>
+#include <stddef.h>
+#include <errno.h>
 
 #include "direwolf.h"
 #include "ax25_pad.h"
@@ -106,26 +108,36 @@
 #include "pfilter.h"
 #include "dtime_now.h"
 #include "mheard.h"
-
+#include "dwsock.h"
 
 
 #if __WIN32__
-static unsigned __stdcall connnect_thread (void *arg);
+static unsigned __stdcall connnect_thread_aprs (void *arg);
+static unsigned __stdcall connnect_thread_cwop (void *arg);
 static unsigned __stdcall igate_recv_thread (void *arg);
 static unsigned __stdcall satgate_delay_thread (void *arg);
 #else
-static void * connnect_thread (void *arg);
+static void * connnect_thread_aprs (void *arg);
+static void * connnect_thread_cwop (void *arg);
 static void * igate_recv_thread (void *arg);
 static void * satgate_delay_thread (void *arg);
 #endif
 
 
+// SATgate was done on a whim, after seeing something
+// in a discussion group.  Turns out to be not such
+// a good idea.  This should be deprecated.
+// The correct approach is to use filtering on whether
+// packet was digipeated by RS0ISS.  Maybe filtering
+// was not available back then.
+
 static dw_mutex_t dp_mutex;				/* Critical section for delayed packet queue. */
 static packet_t dp_queue_head;
 
+static void setup_cwop_connect_threads(void);
 static void satgate_delay_packet (packet_t pp, int chan);
 static void send_packet_to_server (packet_t pp, int chan);
-static void send_msg_to_server (const char *msg, int msg_len);
+static void send_msg_to_server (int my_server_index, const char *msg, int msg_len);
 static void maybe_xmit_packet_from_igate (char *message, int chan);
 
 static void rx_to_ig_init (void);
@@ -136,69 +148,34 @@ static void ig_to_tx_init (void);
 static int ig_to_tx_allow (packet_t pp, int chan);
 
 
-/* 
- * File descriptor for socket to IGate server. 
- * Set to -1 if not connected. 
- * (Don't use SOCKET type because it is unsigned.) 
-*/
+// Context for a connection to an APRS-IS server.
+// For regular ham radio APRS-IS we use only the first table entry.
+// For CWOP mode, the round robin name is expanded to multiple addresses
+// and we will have threads for each server.
 
-static volatile int igate_sock = -1;	
+#define MAX_IS_HOSTS 50		// A bit extreme but better safe than sorry.
 
-/*
- * After connecting to server, we want to make sure
- * that the login sequence is sent first.
- * This is set to true after the login is complete.
- */
+static struct s_server {
 
-static volatile int ok_to_send = 0;
+	char ipaddr_str[46];		//text form of IP address
+	char server_port_str[12];	// text form of port number
 
+	// File descriptor for socket to IGate server. 
+	// Set to -1 if not connected. 
+	// (Don't use SOCKET type because it is unsigned.) 
 
+	volatile int igate_sock;
 
+	// After connecting to server, we want to make sure
+	// that the login sequence is sent first.  Starts out false.
+	// This is set to true after the login is complete.
 
-/*
- * Convert Internet address to text.
- * Can't use InetNtop because it is supported only on Windows Vista and later. 
- */
+	volatile int ok_to_send;
 
-static char * ia_to_text (int  Family, void * pAddr, char * pStringBuf, size_t StringBufSize)
-{
-	struct sockaddr_in *sa4;
-	struct sockaddr_in6 *sa6;
+} is_server[MAX_IS_HOSTS];
 
-	switch (Family) {
-	  case AF_INET:
-	    sa4 = (struct sockaddr_in *)pAddr;
-#if __WIN32__
-	    snprintf (pStringBuf, StringBufSize, "%d.%d.%d.%d", sa4->sin_addr.S_un.S_un_b.s_b1,
-						sa4->sin_addr.S_un.S_un_b.s_b2,
-						sa4->sin_addr.S_un.S_un_b.s_b3,
-						sa4->sin_addr.S_un.S_un_b.s_b4);
-#else
-	    inet_ntop (AF_INET, &(sa4->sin_addr), pStringBuf, StringBufSize);
-#endif
-	    break;
-	  case AF_INET6:
-	    sa6 = (struct sockaddr_in6 *)pAddr;
-#if __WIN32__
-	    snprintf (pStringBuf, StringBufSize, "%x:%x:%x:%x:%x:%x:%x:%x",  
-					ntohs(((unsigned short *)(&(sa6->sin6_addr)))[0]),
-					ntohs(((unsigned short *)(&(sa6->sin6_addr)))[1]),
-					ntohs(((unsigned short *)(&(sa6->sin6_addr)))[2]),
-					ntohs(((unsigned short *)(&(sa6->sin6_addr)))[3]),
-					ntohs(((unsigned short *)(&(sa6->sin6_addr)))[4]),
-					ntohs(((unsigned short *)(&(sa6->sin6_addr)))[5]),
-					ntohs(((unsigned short *)(&(sa6->sin6_addr)))[6]),
-					ntohs(((unsigned short *)(&(sa6->sin6_addr)))[7]));
-#else
-	    inet_ntop (AF_INET6, &(sa6->sin6_addr), pStringBuf, StringBufSize);
-#endif
-	    break;
-	  default:
-	    snprintf (pStringBuf, StringBufSize, "Invalid address family!");
-	}
-	//assert (strlen(pStringBuf) < StringBufSize);
-	return pStringBuf;
-}
+static int num_is_servers = 0;	// Number of elements used above for CWOP mode.
+				// Should be 1 for normal ham APRS-IS.
 
 
 #if ITEST
@@ -216,8 +193,8 @@ int main (int argc, char *argv[])
 
 	memset (&audio_config, 0, sizeof(audio_config));
 	audio_config.adev[0].num_channels = 2;
-	strlcpy (audio_config.achan[0].mycall, "WB2OSZ-1", sizeof(audio_config.achan[0].mycall));
-	strlcpy (audio_config.achan[1].mycall, "WB2OSZ-2", sizeof(audio_config.achan[0].mycall));
+	strlcpy (audio_config.mycall[0], "WB2OSZ-1", sizeof(audio_config.achan[0].mycall));
+	strlcpy (audio_config.mycall[1], "WB2OSZ-2", sizeof(audio_config.achan[0].mycall));
 
 	memset (&igate_config, 0, sizeof(igate_config));
 
@@ -236,7 +213,7 @@ int main (int argc, char *argv[])
 
 	igate_init(&audio_config, &igate_config, &digi_config, 0);
 
-	while (igate_sock == -1) {
+	while (is_server[0].igate_sock == -1) {
 	  SLEEP_SEC(1);
 	}
 
@@ -275,7 +252,7 @@ int main (int argc, char *argv[])
 	  SLEEP_SEC (20);
 	  text_color_set(DW_COLOR_INFO);
 	  dw_printf ("Send received packet\n");
-	  send_msg_to_server ("W1ABC>APRS:?", strlen("W1ABC>APRS:?"));
+	  send_msg_to_server (0, "W1ABC>APRS:?", strlen("W1ABC>APRS:?"));
 	}
 #endif
 	return 0;
@@ -394,21 +371,24 @@ int igate_get_dnl_cnt (void) {
  *				  1  plus packets sent TO server or why not.
  *				  2  plus duplicate detection overview.
  *				  3  plus duplicate detection details.
+ *				  4  plus DNS details.
  *
- * Description:	This starts two threads:
+ * Description:	Originally: This starts two threads:
  *
  *		  *  to establish and maintain a connection to the server.
  *		  *  to listen for packets from the server.
  *
+ *		In version 1.8 we add CWOP mode to gather from multiple servers.
+ *		Each one has a connection thread and a data reading thread.
+
  *--------------------------------------------------------------------*/
 
 
 void igate_init (struct audio_s *p_audio_config, struct igate_config_s *p_igate_config, struct digi_config_s *p_digi_config, int debug_level)
 {
 #if __WIN32__
-	HANDLE connnect_th;
 	HANDLE cmd_recv_th;
-	HANDLE satgate_delay_th;
+	HANDLE satgate_delay_th;	// TODO: Remove this in release 1.9
 #else
 	pthread_t connect_listen_tid;
 	pthread_t cmd_listen_tid;
@@ -445,7 +425,13 @@ void igate_init (struct audio_s *p_audio_config, struct igate_config_s *p_igate_
 	stats_downlink_packets = 0;
 	stats_rf_xmit_packets = 0;
 	stats_msg_cnt = 0;
-	
+
+	for (int j=0; j<MAX_IS_HOSTS; j++) {
+	  is_server[j].igate_sock = -1;
+	  is_server[j].ok_to_send = 0;
+	}
+	num_is_servers = 0;
+
 	rx_to_ig_init ();
 	ig_to_tx_init ();
 
@@ -459,46 +445,58 @@ void igate_init (struct audio_s *p_audio_config, struct igate_config_s *p_igate_
 	  return;
 	}
 
+	if (p_igate_config->cwop_mode) {
+	  setup_cwop_connect_threads();
+	}
+	else {
 /*
- * This connects to the server and sets igate_sock.
+ * This connects to the ham AORS-IS server and sets igate_sock.
  * It also sends periodic messages to say I'm still alive.
+ * If connection is lost reconnection is attempted.
  */
-
+	  num_is_servers = 1;
+	  for (int n=0; n<num_is_servers; n++) {
 #if __WIN32__
-	connnect_th = (HANDLE)_beginthreadex (NULL, 0, connnect_thread, (void *)NULL, 0, NULL);
-	if (connnect_th == NULL) {
-	  text_color_set(DW_COLOR_ERROR);
-	  dw_printf ("Internal error: Could not create IGate connection thread\n");
-	  return;
-	}
+	    HANDLE connnect_th = (HANDLE)_beginthreadex (NULL, 0, connnect_thread_aprs, (void*)(ptrdiff_t)n, 0, NULL);
+	    if (connnect_th == NULL) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Internal error: Could not create IGate connection thread\n");
+	      return;
+	    }
 #else
-	e = pthread_create (&connect_listen_tid, NULL, connnect_thread, NULL);
-	if (e != 0) {
-	  text_color_set(DW_COLOR_ERROR);
-	  perror("Internal error: Could not create IGate connection thread");
-	  return;
+	    e = pthread_create (&connect_listen_tid, NULL, connnect_thread_aprs, (void*)(ptrdiff_t)n);
+	    if (e != 0) {
+	      text_color_set(DW_COLOR_ERROR);
+	      perror("Internal error: Could not create IGate connection thread");
+	      return;
+	    }
+#endif  // __WIN32__
+	  }  //  for each is_server - should be one.
 	}
-#endif
+
 
 /*
  * This reads messages from client when igate_sock is valid.
+ * No difference between ham APRS-IS and CWOP.
  */
 
+	for (int n=0; n<num_is_servers; n++) {
 #if __WIN32__
-	cmd_recv_th = (HANDLE)_beginthreadex (NULL, 0, igate_recv_thread, NULL, 0, NULL);
-	if (cmd_recv_th == NULL) {
-	  text_color_set(DW_COLOR_ERROR);
-	  dw_printf ("Internal error: Could not create IGate reading thread\n");
-	  return;
-	}
+	  cmd_recv_th = (HANDLE)_beginthreadex (NULL, 0, igate_recv_thread, (void*)(ptrdiff_t)n, 0, NULL);
+	  if (cmd_recv_th == NULL) {
+	    text_color_set(DW_COLOR_ERROR);
+	    dw_printf ("Internal error: Could not create IGate reading thread\n");
+	    return;
+	  }
 #else
-	e = pthread_create (&cmd_listen_tid, NULL, igate_recv_thread, NULL);
-	if (e != 0) {
-	  text_color_set(DW_COLOR_ERROR);
-	  perror("Internal error: Could not create IGate reading thread");
-	  return;
-	}
+	  e = pthread_create (&cmd_listen_tid, NULL, igate_recv_thread, (void*)(ptrdiff_t)n);
+	  if (e != 0) {
+	    text_color_set(DW_COLOR_ERROR);
+	    perror("Internal error: Could not create IGate reading thread");
+	    return;
+	  }
 #endif
+	}  // for each is_server
 
 /*
  * This lets delayed packets continue after specified amount of time.
@@ -526,24 +524,139 @@ void igate_init (struct audio_s *p_audio_config, struct igate_config_s *p_igate_
 } /* end igate_init */
 
 
+
 /*-------------------------------------------------------------------
  *
- * Name:        connnect_thread
+ * Name:        setup_cwop_connect_threads
  *
- * Purpose:     Establish connection with IGate server.
+ * Purpose:     Start up a thread to manage connection to each CWOP server.
+ *
+ * Inputs:	save_igate_config_p->t2_server_name
+ *
+ * Outputs:	is_server[my_server_index]
+ *			.ipaddr_str		IP address as string
+ *			.server_port_str	server port as string
+ *			.igate_sock		file number for socket
+ *			.ok_to_send		OK to send APRS-IS
+ *
+ * Description: Look up IP addresses for the round robin DNS CWOP server name and store in table.
+ *		For each one, start up a thread to manage connection to that address.
+ *
+ *--------------------------------------------------------------------*/
+
+static void setup_cwop_connect_threads(void)
+{
+	struct addrinfo hints;
+	struct addrinfo *ai_head = NULL;
+	struct addrinfo *ai;
+	char server_port_str[12];
+	int err;
+
+	memset (&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;	/* Allow either IPv4 or IPv6. */
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_protocol = IPPROTO_TCP;
+
+	snprintf (server_port_str, sizeof(server_port_str), "%d", save_igate_config_p->t2_server_port);
+
+	ai_head = NULL;
+	err = getaddrinfo(save_igate_config_p->t2_server_name, server_port_str, &hints, &ai_head);
+	if (err != 0) {
+	  text_color_set(DW_COLOR_ERROR);
+#if __WIN32__
+	  dw_printf ("Can't get address for CWOP server %s, err=%d\n", 
+					save_igate_config_p->t2_server_name, WSAGetLastError());
+#else 
+	  dw_printf ("Can't get address for CWOP server %s, %s\n", 
+					save_igate_config_p->t2_server_name, gai_strerror(err));
+#endif
+	  freeaddrinfo(ai_head);
+	}
+
+	if (s_debug >= 4) {
+	  text_color_set(DW_COLOR_DEBUG);
+	  dw_printf ("cwop getaddrinfo returns:\n");
+	}
+	num_is_servers = 0;
+	for (ai = ai_head; ai != NULL; ai = ai->ai_next) {
+	  dwsock_ia_to_text (ai->ai_family, ai->ai_addr, 
+				is_server[num_is_servers].ipaddr_str,
+				sizeof(is_server[num_is_servers].ipaddr_str));
+	  strlcpy (is_server[num_is_servers].server_port_str, server_port_str,
+				sizeof(is_server[num_is_servers].server_port_str));
+	  if (s_debug >= 4) {
+	    dw_printf ("    [%d] %s\n", num_is_servers, is_server[num_is_servers].ipaddr_str);
+	  }
+
+	  // Don't run off end if too many.
+	  if (num_is_servers < MAX_IS_HOSTS) num_is_servers++;
+	}
+
+	freeaddrinfo(ai_head);
+
+/*
+ * Start up a thread for each one.
+ */
+
+	for (int n=0; n<num_is_servers; n++) {
+
+	  //text_color_set(DW_COLOR_DEBUG);
+	  //dw_printf ("DEBUG start connect thread for index %d\n", n);
+
+#if __WIN32__
+	  HANDLE connnect_th = (HANDLE)_beginthreadex (NULL, 0, connnect_thread_cwop, (void*)(ptrdiff_t)n, 0, NULL);
+	  if (connnect_th == NULL) {
+	    text_color_set(DW_COLOR_ERROR);
+	    dw_printf ("Internal error: Could not create CWOP connection thread\n");
+	    return;
+	  }
+#else
+	  pthread_t connect_listen_tid;
+	  int e = pthread_create (&connect_listen_tid, NULL, connnect_thread_cwop, (void*)(ptrdiff_t)n);
+	  if (e != 0) {
+	    text_color_set(DW_COLOR_ERROR);
+	    perror("Internal error: Could not create CWOP connection thread");
+	    return;
+	  }
+#endif  // __WIN32__
+	  SLEEP_SEC(1);		// Stagger start up.
+	}  //  for each is_server 
+
+} // end setup_cwop_connect_threads
+
+
+
+
+/*-------------------------------------------------------------------
+ *
+ * Name:        connnect_thread_aprs
+ *
+ * Purpose:     Establish connection with APRS-IS for regular ham mode.
  *		Send periodic heartbeat to keep keep connection active.
  *		Reconnect if something goes wrong and we got disconnected.
  *
- * Inputs:	arg		- Not used.
+ * Inputs:	arg		- Index into table of servers.
+ *				  Value goes into local my_server_index.
+ *				  For regular APRS-IS this should be zero.
  *
- * Outputs:	igate_sock	- File descriptor for communicating with client app.
- *				  Will be -1 if not connected.
+ * Outputs:	is_server[my_server_index]
+ *			.ipaddr_str		IP address as string
+ *			.server_port_str	server port as string
+ *			.igate_sock		file number for socket, -1 if not connected
+ *			.ok_to_send		OK to send APRS-IS
  *
  * References:	TCP client example.
  *		http://msdn.microsoft.com/en-us/library/windows/desktop/ms737591(v=vs.85).aspx
  *
  *		Linux IPv6 HOWTO
  *		http://www.tldp.org/HOWTO/Linux+IPv6-HOWTO/
+ *
+ * Description: This takes a round robin DNS name like noam.aprs2.net, retrieves a list
+ *		of addresses, and shuffles them.
+ *
+ *		Attempt to connect to each address in list until successful.
+ *		If connection is lost, expand the DNS name into a new list of addresses
+ *		because it might have changed.  Attempt connecting to one of them again.
  *
  *--------------------------------------------------------------------*/
 
@@ -555,7 +668,7 @@ void igate_init (struct audio_s *p_audio_config, struct igate_config_s *p_igate_
 
 static void shuffle (struct addrinfo *host[], int nhosts)
 {
-        int j, k;
+	int j, k;
 
         assert (RAND_MAX >= nhosts);  /* for % to work right */
 
@@ -573,55 +686,36 @@ static void shuffle (struct addrinfo *host[], int nhosts)
         }
 }
 
-#define MAX_HOSTS 50
-
 
 
 
 #if __WIN32__
-static unsigned __stdcall connnect_thread (void *arg)
+static unsigned __stdcall connnect_thread_aprs (void *arg)
 #else
-static void * connnect_thread (void *arg)	
+static void * connnect_thread_aprs (void *arg)	
 #endif	
 {
+        int my_server_index = (int)(ptrdiff_t)arg;
+
 	struct addrinfo hints;
 	struct addrinfo *ai_head = NULL;
 	struct addrinfo *ai;
-	struct addrinfo *hosts[MAX_HOSTS];
+	struct addrinfo *hosts[MAX_IS_HOSTS];
 	int num_hosts, n;
 	int err;
 	char server_port_str[12];	/* text form of port number */
 	char ipaddr_str[46];		/* text form of IP address */
-#if __WIN32__
-	WSADATA wsadata;
-#endif
 
 	snprintf (server_port_str, sizeof(server_port_str), "%d", save_igate_config_p->t2_server_port);
 #if DEBUGx
 	text_color_set(DW_COLOR_DEBUG);
-        dw_printf ("DEBUG: igate connect_thread start, port = %d = '%s'\n", save_igate_config_p->t2_server_port, server_port_str);
-#endif
-
-#if __WIN32__
-	err = WSAStartup (MAKEWORD(2,2), &wsadata);
-	if (err != 0) {
-	    text_color_set(DW_COLOR_ERROR);
-	    dw_printf("WSAStartup failed: %d\n", err);
-	    return (0);
-	}
-
-	if (LOBYTE(wsadata.wVersion) != 2 || HIBYTE(wsadata.wVersion) != 2) {
-	  text_color_set(DW_COLOR_ERROR);
-          dw_printf("Could not find a usable version of Winsock.dll\n");
-          WSACleanup();
-	  //sleep (1);
-          return (0);
-	}
+        dw_printf ("DEBUG: igate connect_thread_aprs start, port = %d = '%s'\n", save_igate_config_p->t2_server_port, server_port_str);
 #endif
 
 	memset (&hints, 0, sizeof(hints));
-
 	hints.ai_family = AF_UNSPEC;	/* Allow either IPv4 or IPv6. */
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_protocol = IPPROTO_TCP;
 
 	// IPv6 is half baked on Windows XP.
 	// We might need to leave out IPv6 support for Windows version.
@@ -629,12 +723,9 @@ static void * connnect_thread (void *arg)
 
 #if IPV6_ONLY
 	/* IPv6 addresses always show up at end of list. */
-	/* Force use of them for testing. */
+	/* Force use of only them for testing. */
 	hints.ai_family = AF_INET6;	/* IPv6 only */
 #endif					
-	hints.ai_socktype = SOCK_STREAM;
-	hints.ai_protocol = IPPROTO_TCP;
-
 
 /*
  * Repeat forever.
@@ -646,7 +737,7 @@ static void * connnect_thread (void *arg)
  * Connect to IGate server if not currently connected.
  */
 
-	  if (igate_sock == -1) {
+	  if (is_server[my_server_index].igate_sock == -1) {
 
 	    SLEEP_SEC (5);
 
@@ -666,19 +757,19 @@ static void * connnect_thread (void *arg)
 	      continue;
 	    }
 
-#if DEBUG_DNS
-	    text_color_set(DW_COLOR_DEBUG);
-	    dw_printf ("getaddrinfo returns:\n");
-#endif
+	    if (s_debug >= 4) {
+	      text_color_set(DW_COLOR_DEBUG);
+	      dw_printf ("getaddrinfo returns:\n");
+	    }
 	    num_hosts = 0;
 	    for (ai = ai_head; ai != NULL; ai = ai->ai_next) {
-#if DEBUG_DNS
-	      text_color_set(DW_COLOR_DEBUG);
-	      ia_to_text (ai->ai_family, ai->ai_addr, ipaddr_str, sizeof(ipaddr_str));
-	      dw_printf ("    %s\n", ipaddr_str);
-#endif
+	      if (s_debug >= 4) {
+	        text_color_set(DW_COLOR_DEBUG);
+	        dwsock_ia_to_text (ai->ai_family, ai->ai_addr, ipaddr_str, sizeof(ipaddr_str));
+	        dw_printf ("    [%d] %s\n", num_hosts, ipaddr_str);
+	      }
 	      hosts[num_hosts] = ai;
-	      if (num_hosts < MAX_HOSTS) num_hosts++;
+	      if (num_hosts < MAX_IS_HOSTS) num_hosts++;
 	    }
 
 	    // We can get multiple addresses back for the host name.
@@ -689,14 +780,14 @@ static void * connnect_thread (void *arg)
 
 	    shuffle (hosts, num_hosts);
 
-#if DEBUG_DNS
-	    text_color_set(DW_COLOR_DEBUG);
-	    dw_printf ("after shuffling:\n");
-	    for (n=0; n<num_hosts; n++) {
-	      ia_to_text (hosts[n]->ai_family, hosts[n]->ai_addr, ipaddr_str, sizeof(ipaddr_str));
-	      dw_printf ("    %s\n", ipaddr_str);
+	    if (s_debug >= 4) {
+	      text_color_set(DW_COLOR_DEBUG);
+	      dw_printf ("after shuffling:\n");
+	      for (n=0; n<num_hosts; n++) {
+	        dwsock_ia_to_text (hosts[n]->ai_family, hosts[n]->ai_addr, ipaddr_str, sizeof(ipaddr_str));
+	        dw_printf ("    [%d] %s\n", n, ipaddr_str);
+	      }
 	    }
-#endif
 
 	    // Try each address until we find one that is successful.
 
@@ -708,7 +799,7 @@ static void * connnect_thread (void *arg)
 #endif
 	      ai = hosts[n];
 
-	      ia_to_text (ai->ai_family, ai->ai_addr, ipaddr_str, sizeof(ipaddr_str));
+	      dwsock_ia_to_text (ai->ai_family, ai->ai_addr, ipaddr_str, sizeof(ipaddr_str));
 	      is = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
 #if __WIN32__
 	      if (is == INVALID_SOCKET) {
@@ -731,7 +822,8 @@ static void * connnect_thread (void *arg)
 	      }
 #endif
 
-#ifndef DEBUG_DNS 
+//#ifndef DEBUG_DNS
+#if 1
 	      err = connect(is, ai->ai_addr, (int)ai->ai_addrlen);
 #if __WIN32__
 	      if (err == SOCKET_ERROR) {
@@ -782,15 +874,15 @@ static void * connnect_thread (void *arg)
  * But make the Rx -> Internet messages wait until after login.
  */
 
-	      ok_to_send = 0;
-	      igate_sock = is;
+	      is_server[my_server_index].ok_to_send = 0;
+	      is_server[my_server_index].igate_sock = is;
 #endif	  
 	      break;
 	    }
 
 	    freeaddrinfo(ai_head);
 
-	    if (igate_sock != -1) {
+	    if (is_server[my_server_index].igate_sock != -1) {
 	      char stemp[256];
 
 /* 
@@ -806,44 +898,263 @@ static void * connnect_thread (void *arg)
 	        strlcat (stemp, " filter ", sizeof(stemp));
 	        strlcat (stemp, save_igate_config_p->t2_filter, sizeof(stemp));
 	      }
-	      send_msg_to_server (stemp, strlen(stemp));
+	      send_msg_to_server (my_server_index, stemp, strlen(stemp));
 
 /* Delay until it is ok to start sending packets. */
 
 	      SLEEP_SEC(7);
-	      ok_to_send = 1;
+	      is_server[my_server_index].ok_to_send = 1;
 	    }
 	  }
 
 /*
  * If connected to IGate server, send heartbeat periodically to keep connection active.
  */
-	  if (igate_sock != -1) {
+	  if (is_server[my_server_index].igate_sock != -1) {
 	    SLEEP_SEC(10);
 	  }
-	  if (igate_sock != -1) {
+	  if (is_server[my_server_index].igate_sock != -1) {
 	    SLEEP_SEC(10);
 	  }
-	  if (igate_sock != -1) {
+	  if (is_server[my_server_index].igate_sock != -1) {
 	    SLEEP_SEC(10);
 	  }
 
 
-	  if (igate_sock != -1) {
+	  if (is_server[my_server_index].igate_sock != -1) {
 
 	    char heartbeat[10];
 
 	    strlcpy (heartbeat, "#", sizeof(heartbeat));
 
 	    /* This will close the socket if any error. */
-	    send_msg_to_server (heartbeat, strlen(heartbeat));
+	    send_msg_to_server (my_server_index, heartbeat, strlen(heartbeat));
 
 	  }
 	}
 
 	exit(0);	// Unreachable but stops compiler from complaining
 			// about function not returning a value.
-} /* end connnect_thread */
+} /* end connnect_thread_aprs */
+
+
+
+/*-------------------------------------------------------------------
+ *
+ * Name:        connnect_thread_cwop
+ *
+ * Purpose:     Establish connection with APRS-IS for regular ham mode.
+ *		Send periodic heartbeat to keep keep connection active.
+ *		Reconnect if something goes wrong and we got disconnected.
+ *
+ * Inputs:	arg		- Index into table of servers.
+ *				  Value goes into local my_server_index.
+ *				  For regular APRS-IS this should be zero.
+ *
+ * Outputs:	is_server[my_server_index].igate_sock
+ *				- File descriptor for communicating with client app.
+ *				  Will be -1 if not connected.
+ *
+ * References:	TCP client example.
+ *		http://msdn.microsoft.com/en-us/library/windows/desktop/ms737591(v=vs.85).aspx
+ *
+ *		Linux IPv6 HOWTO
+ *		http://www.tldp.org/HOWTO/Linux+IPv6-HOWTO/
+ *
+ * Description: This takes a round robin DNS name like noam.aprs2.net, retrieves a list
+ *		of addresses, and shuffles them.
+ *
+ *		Attempt to connect to each address in list until successful.
+ *		If connection is lost, expand the DNS name into a new list of addresses
+ *		because it might have changed.  Attempt connecting to one of them again.
+ *
+ *--------------------------------------------------------------------*/
+
+#define CWOP_RETRY_TIME 30		// in minutes
+
+#if __WIN32__
+static unsigned __stdcall connnect_thread_cwop (void *arg)
+#else
+static void * connnect_thread_cwop (void *arg)	
+#endif	
+{
+        int my_server_index = (int)(ptrdiff_t)arg;
+	int err;
+	char server_port_str[12];	/* text form of port number */
+	//char ipaddr_str[46];		/* text form of IP address */
+
+	snprintf (server_port_str, sizeof(server_port_str), "%d", save_igate_config_p->t2_server_port);
+#if DEBUGx
+	text_color_set(DW_COLOR_DEBUG);
+        dw_printf ("DEBUG: igate connect_thread_aprs start, port = %d = '%s'\n", save_igate_config_p->t2_server_port, server_port_str);
+#endif
+
+	struct addrinfo hints;
+	memset (&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;	/* Allow either IPv4 or IPv6. */
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_protocol = IPPROTO_TCP;
+
+	while (1) {
+
+/*
+ * Connect to CWOP server if not currently connected.
+ */
+
+	  if (is_server[my_server_index].igate_sock == -1) {
+
+	    struct addrinfo *ai = NULL;
+	    err = getaddrinfo(is_server[my_server_index].ipaddr_str, server_port_str, &hints, &ai);
+	    if (err != 0) {
+	      // This should not fail - we are supplying ip addr not hostname.
+	      text_color_set(DW_COLOR_ERROR);
+#if __WIN32__
+	      dw_printf ("Can't get address for IGate server %s, err=%d\n", 
+					save_igate_config_p->t2_server_name, WSAGetLastError());
+#else 
+	      dw_printf ("Can't get address for IGate server %s, %s\n", 
+					save_igate_config_p->t2_server_name, gai_strerror(err));
+#endif
+	      freeaddrinfo(ai);
+	      dw_printf ("Try again in %d minutes...\n", CWOP_RETRY_TIME);
+	      SLEEP_SEC (CWOP_RETRY_TIME * 60);
+	      continue;		
+	    }
+
+#if __WIN32__
+	    SOCKET is;
+#else
+	    int is;
+#endif
+	    is = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+
+#if __WIN32__
+	    if (is == INVALID_SOCKET) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("CWOP: Socket creation failed, err=%d\n", WSAGetLastError());
+	      WSACleanup();
+#else
+	    if (is == -1) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf("CWOP: Socket creation failed, errno=%d\n", errno);
+#endif
+	      is = -1;
+	      freeaddrinfo (ai);
+	      ai = NULL;
+	      stats_failed_connect++;
+	      dw_printf ("Try again in %d minutes...\n", CWOP_RETRY_TIME);
+	      SLEEP_SEC (CWOP_RETRY_TIME * 60);
+	      continue;
+	    }
+
+	    err = connect(is, ai->ai_addr, (int)ai->ai_addrlen);
+	    freeaddrinfo (ai);
+	    ai = NULL;
+
+#if __WIN32__
+	    if (err == SOCKET_ERROR) {
+	      text_color_set(DW_COLOR_INFO);
+	      dw_printf("Connect to CWOP server %s (%s) failed.\n\n",
+					save_igate_config_p->t2_server_name,
+					is_server[my_server_index].ipaddr_str);
+	      closesocket (is);
+#else
+	    if (err != 0) {
+	      text_color_set(DW_COLOR_INFO);
+	      dw_printf("Connect to CWOP server %s (%s) failed, errno=%d.\n\n",
+					save_igate_config_p->t2_server_name,
+					is_server[my_server_index].ipaddr_str,
+					errno);
+	      (void) close (is);
+#endif
+	      is = -1;
+	      stats_failed_connect++;
+	      dw_printf ("Try again in %d minutes...\n", CWOP_RETRY_TIME);
+	      SLEEP_SEC (CWOP_RETRY_TIME * 60);
+	      continue;
+	    }
+
+/* Success. */	
+
+	    stats_connects++;
+	    stats_connect_at = time(NULL);
+
+	    text_color_set(DW_COLOR_INFO);
+ 	    dw_printf("\nNow connected to CWOP server %s (%s)\n",
+					save_igate_config_p->t2_server_name,
+					is_server[my_server_index].ipaddr_str );
+	    if (strchr(is_server[my_server_index].ipaddr_str, ':') != NULL) {
+	      dw_printf("Check server status here http://[%s]:14501\n\n",
+					is_server[my_server_index].ipaddr_str);
+	    }
+	    else {
+	      dw_printf("Check server status here http://%s:14501\n\n",
+					is_server[my_server_index].ipaddr_str);
+	    }
+
+/* 
+ * Set igate_sock so everyone else can start using it. 
+ * But make the Rx -> Internet messages wait until after login.
+ */
+	    is_server[my_server_index].ok_to_send = 0;
+	    is_server[my_server_index].igate_sock = is;
+
+	    if (is_server[my_server_index].igate_sock != -1) {
+	      char stemp[256];
+
+/* 
+ * Send login message.
+ * Software name and version must not contain spaces.
+ */
+
+	      SLEEP_SEC(3);
+	      snprintf (stemp, sizeof(stemp), "user %s pass %s vers Dire-Wolf %d.%d", 
+			save_igate_config_p->t2_login, save_igate_config_p->t2_passcode,
+			MAJOR_VERSION, MINOR_VERSION);
+	      if (save_igate_config_p->t2_filter != NULL) {
+	        strlcat (stemp, " filter ", sizeof(stemp));
+	        strlcat (stemp, save_igate_config_p->t2_filter, sizeof(stemp));
+	      }
+
+dw_printf ("DEBUG: send login to %d\n", my_server_index);
+dw_printf ("%s\n", stemp);
+	      send_msg_to_server (my_server_index, stemp, strlen(stemp));
+
+/* Delay until it is ok to start sending packets. */
+
+	      SLEEP_SEC(7);
+	      is_server[my_server_index].ok_to_send = 1;
+	    }
+	  }
+
+/*
+ * If connected to IGate server, send heartbeat periodically to keep connection active.
+ */
+	  if (is_server[my_server_index].igate_sock != -1) {
+	    SLEEP_SEC(10);
+	  }
+	  if (is_server[my_server_index].igate_sock != -1) {
+	    SLEEP_SEC(10);
+	  }
+	  if (is_server[my_server_index].igate_sock != -1) {
+	    SLEEP_SEC(10);
+	  }
+
+
+	  if (is_server[my_server_index].igate_sock != -1) {
+
+	    char heartbeat[10];
+
+	    strlcpy (heartbeat, "#", sizeof(heartbeat));
+
+	    /* This will close the socket if any error. */
+	    send_msg_to_server (my_server_index, heartbeat, strlen(heartbeat));
+	  }
+	}
+
+	exit(0);	// Unreachable but stops compiler from complaining
+			// about function not returning a value.
+} /* end connnect_thread_cwop */
 
 
 
@@ -861,7 +1172,6 @@ static void * connnect_thread (void *arg)
  *
  *		recv_pp	- Pointer to packet object.
  *			  *** CALLER IS RESPONSIBLE FOR DELETING IT! **
- *		
  *
  * Description:	Send message to IGate Server if connected.
  *
@@ -879,17 +1189,25 @@ static void * connnect_thread (void *arg)
 
 void igate_send_rec_packet (int chan, packet_t recv_pp)
 {
-	packet_t pp;
+	int my_server_index = 0;	// for regular APRS-IS.
 	int n;
 	unsigned char *pinfo;
 	int info_len;
-	
 
-	if (igate_sock == -1) {
+	// Do not allow for CWOP mode.
+	// Revisit someday.  Should there be a message?
+	// Maybe allow it and pick one server at random?
+	// We certainly don't want to send to all.
+
+	if (save_igate_config_p->cwop_mode) {
+	  return;
+	}
+
+	if (is_server[my_server_index].igate_sock == -1) {
 	  return;	/* Silently discard if not connected. */
 	}
 
-	if ( ! ok_to_send) {
+	if ( ! is_server[my_server_index].ok_to_send) {
 	  return;	/* Login not complete. */
 	}
 
@@ -909,10 +1227,10 @@ void igate_send_rec_packet (int chan, packet_t recv_pp)
 // Beacon will be channel -1.
 // Client app to ICHANNEL is outside of radio channel range.
 
-	if (chan >= 0 && chan < MAX_CHANS && 		// in radio channel range
-		save_digi_config_p->filter_str[chan][MAX_CHANS] != NULL) {
+	if (chan >= 0 && chan < MAX_TOTAL_CHANS && 		// in radio channel range
+		save_digi_config_p->filter_str[chan][MAX_TOTAL_CHANS] != NULL) {
 
-	  if (pfilter(chan, MAX_CHANS, save_digi_config_p->filter_str[chan][MAX_CHANS], recv_pp, 1) != 1) {
+	  if (pfilter(chan, MAX_TOTAL_CHANS, save_digi_config_p->filter_str[chan][MAX_TOTAL_CHANS], recv_pp, 1) != 1) {
 
 	    // Is this useful troubleshooting information or just distracting noise?
 	    // Originally this was always printed but there was a request to add a "quiet" option to suppress this.
@@ -920,7 +1238,7 @@ void igate_send_rec_packet (int chan, packet_t recv_pp)
 
 	    if (s_debug >= 1) {
 	      text_color_set(DW_COLOR_INFO);
-	      dw_printf ("Packet from channel %d to IGate was rejected by filter: %s\n", chan, save_digi_config_p->filter_str[chan][MAX_CHANS]);
+	      dw_printf ("Packet from channel %d to IGate was rejected by filter: %s\n", chan, save_digi_config_p->filter_str[chan][MAX_TOTAL_CHANS]);
 	    }
 	    return;
 	  }
@@ -930,7 +1248,7 @@ void igate_send_rec_packet (int chan, packet_t recv_pp)
  * First make a copy of it because it might be modified in place.
  */
 
-	pp = ax25_dup (recv_pp);
+	packet_t pp = ax25_dup (recv_pp);
 	assert (pp != NULL);
 
 /*
@@ -998,6 +1316,7 @@ void igate_send_rec_packet (int chan, packet_t recv_pp)
 
 /*
  * Do not relay generic query.
+ * TODO:  Should probably block in other direction too, in case rf>is gateway did not drop.
  */
 	if (ax25_get_dti(pp) == '?') {
 	  if (s_debug >= 1) {
@@ -1071,6 +1390,8 @@ void igate_send_rec_packet (int chan, packet_t recv_pp)
  * Inputs:	pp 	- Packet object.
  *
  *		chan	- Radio channel where it was received.
+ *				This will be -1 if from a beacon with sendto=ig
+ *				so be careful if using as subscript.
  *
  * Description:	Duplicate detection is handled here.
  *		Suppress if same was sent recently.
@@ -1082,7 +1403,16 @@ static void send_packet_to_server (packet_t pp, int chan)
 	unsigned char *pinfo;
 	int info_len;
 	char msg[IGATE_MAX_MSG];
+	int my_server_index =0;		// Single server for ham APRS-IS
 
+	// Do not allow for CWOP mode.
+	// Revisit someday.  Should there be a message?
+	// Maybe allow it and pick one server at random?
+	// We certainly don't want to send to all.
+
+	if (save_igate_config_p->cwop_mode) {
+	  return;
+	}
 
 	info_len = ax25_get_info (pp, &pinfo);
 
@@ -1107,6 +1437,10 @@ static void send_packet_to_server (packet_t pp, int chan)
 
 /* 
  * Finally, append ",qAR," and my call to the path.
+ *
+ * According to Pete, "A" stands for APRS.
+ * Original plan was to allow mixing of different types
+ * of data, e.g. qFX for firenet.
  */
 
 /*
@@ -1141,7 +1475,7 @@ static void send_packet_to_server (packet_t pp, int chan)
 	  strlcat (msg, ",qAO,", sizeof(msg));		// new for version 1.4.
 	}
 
-	strlcat (msg, save_audio_config_p->achan[chan].mycall, sizeof(msg));
+	strlcat (msg, save_audio_config_p->mycall[chan>=0 ? chan : 0], sizeof(msg));
 	strlcat (msg, ":", sizeof(msg));
 
 
@@ -1210,7 +1544,7 @@ static void send_packet_to_server (packet_t pp, int chan)
 	  msg_len += info_len;
 	}
 
-	send_msg_to_server (msg, msg_len);
+	send_msg_to_server (my_server_index, msg, msg_len);
 	stats_uplink_packets++;
 
 /*
@@ -1232,7 +1566,9 @@ static void send_packet_to_server (packet_t pp, int chan)
  *		This one function should be used for login, heartbeats,
  *		and packets.
  *
- * Inputs:	imsg	- Message.  We will add CR/LF here.
+ * Inputs:	my_server_index - Index into is_servers.
+ *
+ *		imsg	- Message.  We will add CR/LF here.
  *		
  *		imsg_len - Length of imsg in bytes.
  *			  It could contain nul characters so we can't
@@ -1246,13 +1582,13 @@ static void send_packet_to_server (packet_t pp, int chan)
  *--------------------------------------------------------------------*/
 
 
-static void send_msg_to_server (const char *imsg, int imsg_len)
+static void send_msg_to_server (int my_server_index, const char *imsg, int imsg_len)
 {
 	int err;
 	char stemp[IGATE_MAX_MSG+1];
 	int stemp_len;
 
-	if (igate_sock == -1) {
+	if (is_server[my_server_index].igate_sock == -1) {
 	  return;	/* Silently discard if not connected. */
 	}
 
@@ -1280,24 +1616,24 @@ static void send_msg_to_server (const char *imsg, int imsg_len)
 
 
 #if __WIN32__	
-        err = SOCK_SEND (igate_sock, stemp, stemp_len);
+        err = SOCK_SEND (is_server[my_server_index].igate_sock, stemp, stemp_len);
 	if (err == SOCKET_ERROR)
 	{
 	  text_color_set(DW_COLOR_ERROR);
 	  dw_printf ("\nError %d sending to IGate server.  Closing connection.\n\n", WSAGetLastError());
-	  //dw_printf ("DEBUG: igate_sock=%d, line=%d\n", igate_sock, __LINE__);
-	  closesocket (igate_sock);
-	  igate_sock = -1;
+	  //dw_printf ("DEBUG: igate_sock=%d, line=%d\n", is_server[my_server_index].igate_sock, __LINE__);
+	  closesocket (is_server[my_server_index].igate_sock);
+	  is_server[my_server_index].igate_sock = -1;
 	  WSACleanup();
 	}
 #else
-        err = SOCK_SEND (igate_sock, stemp, stemp_len);
+        err = SOCK_SEND (is_server[my_server_index].igate_sock, stemp, stemp_len);
 	if (err <= 0)
 	{
 	  text_color_set(DW_COLOR_ERROR);
 	  dw_printf ("\nError sending to IGate server.  Closing connection.\n\n");
-	  close (igate_sock);
-	  igate_sock = -1;    
+	  close (is_server[my_server_index].igate_sock);
+	  is_server[my_server_index].igate_sock = -1;    
 	}
 #endif
 	
@@ -1318,24 +1654,24 @@ static void send_msg_to_server (const char *imsg, int imsg_len)
  *
  *--------------------------------------------------------------------*/
 
-static int get1ch (void)
+static int get1ch (int my_server_index)
 {
 	unsigned char ch;
 	int n;
 
 	while (1) {
 
-	  while (igate_sock == -1) {
+	  while (is_server[my_server_index].igate_sock == -1) {
 	    SLEEP_SEC(5);			/* Not connected.  Try again later. */
 	  }
 
 	  /* Just get one byte at a time. */
-	  // TODO: might read complete packets and unpack from own buffer
+	  // TODO: Should read complete packets and unpack from own buffer
 	  // rather than using a system call for each byte.
 
-	  n = SOCK_RECV (igate_sock, (char*)(&ch), 1);
+	  n = SOCK_RECV (is_server[my_server_index].igate_sock, (char*)(&ch), 1);
 
-	  if (n == 1) {
+	  if (n == 1) {		// Success
 #if DEBUG9
 	    dw_printf (log_fp, "%02x %c %c", ch, 
 			isprint(ch) ? ch : '.' , 
@@ -1347,14 +1683,25 @@ static int get1ch (void)
 	    return(ch);	
 	  }
 
+	  // Linux man page: "These calls return the number of bytes received, or -1 if an error occurred
+	  // The return value will be 0 when the peer has performed an orderly shutdown.
+
+	  // I saw 0 when two different clients were logged in with same callsign-ssid.
+
           text_color_set(DW_COLOR_ERROR);
-	  dw_printf ("\nError reading from IGate server.  Closing connection.\n\n");
+	  if (n == 0) {
+	    dw_printf ("\nServer %s has closed connection.\n\n",
+			is_server[my_server_index].ipaddr_str);
+	  }
+	  else {
+	    dw_printf ("\nError reading from server %s.  Closing connection.\n\n", 										is_server[my_server_index].ipaddr_str);
+	  }
 #if __WIN32__
-	  closesocket (igate_sock);
+	  closesocket (is_server[my_server_index].igate_sock);
 #else
-	  close (igate_sock);
+	  close (is_server[my_server_index].igate_sock);
 #endif
-	  igate_sock = -1;
+	  is_server[my_server_index].igate_sock = -1;
 	}
 
 } /* end get1ch */
@@ -1368,7 +1715,8 @@ static int get1ch (void)
  *
  * Purpose:     Wait for messages from IGate Server.
  *
- * Inputs:	arg		- Not used.
+ * Inputs:	arg		- Index into the server table for CWOP mode.
+ *				  Should be zero for regular APRS-IS.
  *
  * Outputs:	igate_sock	- File descriptor for communicating with client app.
  *
@@ -1382,6 +1730,8 @@ static unsigned __stdcall igate_recv_thread (void *arg)
 static void * igate_recv_thread (void *arg)
 #endif
 {
+	int my_server_index = (int)(ptrdiff_t)arg;
+	
 	unsigned char ch;
 	unsigned char message[1000];  // Spec says max 512.
 	int len;
@@ -1389,7 +1739,7 @@ static void * igate_recv_thread (void *arg)
 			
 #if DEBUGx
 	text_color_set(DW_COLOR_DEBUG);
-	dw_printf ("igate_recv_thread ( socket = %d )\n", igate_sock);
+	dw_printf ("igate_recv_thread ( socket = %d )\n", is_server[my_server_index].igate_sock);
 #endif
 
 	while (1) {
@@ -1398,7 +1748,7 @@ static void * igate_recv_thread (void *arg)
 
 	  do
 	  {
-	    ch = get1ch();
+	    ch = get1ch(my_server_index);
 	    stats_downlink_bytes++;
 
 	    // I never expected to see a nul character but it can happen.
@@ -1467,7 +1817,7 @@ static void * igate_recv_thread (void *arg)
  * be bothered by the heart beat messages.
  */
 
-	    if ( ! ok_to_send) {
+	    if ( ! is_server[my_server_index].ok_to_send) {
 	      text_color_set(DW_COLOR_REC);
 	      dw_printf ("[ig] ");
 	      ax25_safe_print ((char *)message, len, 0);
@@ -1781,7 +2131,7 @@ static void maybe_xmit_packet_from_igate (char *message, int to_chan)
 {
 	int n;
 
-	assert (to_chan >= 0 && to_chan < MAX_CHANS);
+	assert (to_chan >= 0 && to_chan < MAX_TOTAL_CHANS);
 
 /*
  * Try to parse it into a packet object; we need this for the packet filtering.
@@ -1856,7 +2206,7 @@ static void maybe_xmit_packet_from_igate (char *message, int to_chan)
  * filtering by stations along the way or the q construct.
  */
 
-	assert (to_chan >= 0 && to_chan < MAX_CHANS);
+	assert (to_chan >= 0 && to_chan < MAX_TOTAL_CHANS);
 
 
 /*
@@ -1906,9 +2256,9 @@ static void maybe_xmit_packet_from_igate (char *message, int to_chan)
 
 	if ( ! msp_special_case) {
 
-	  if (save_digi_config_p->filter_str[MAX_CHANS][to_chan] != NULL) {
+	  if (save_digi_config_p->filter_str[MAX_TOTAL_CHANS][to_chan] != NULL) {
 
-	    if (pfilter(MAX_CHANS, to_chan, save_digi_config_p->filter_str[MAX_CHANS][to_chan], pp3, 1) != 1) {
+	    if (pfilter(MAX_TOTAL_CHANS, to_chan, save_digi_config_p->filter_str[MAX_TOTAL_CHANS][to_chan], pp3, 1) != 1) {
 
 	      // Previously there was a debug message here about the packet being dropped by filtering.
 	      // This is now handled better by the "-df" command line option for filtering details.
@@ -1965,7 +2315,7 @@ static void maybe_xmit_packet_from_igate (char *message, int to_chan)
 	char dest[AX25_MAX_ADDR_LEN];		/* Destination field. */
 	ax25_get_addr_with_ssid (pp3, AX25_DESTINATION, dest);
 	snprintf (payload, sizeof(payload), "%s>%s,TCPIP,%s*:%s",
-				src, dest, save_audio_config_p->achan[to_chan].mycall, pinfo);
+				src, dest, save_audio_config_p->mycall[to_chan], pinfo);
 
 
 #if DEBUGx
@@ -1991,7 +2341,7 @@ static void maybe_xmit_packet_from_igate (char *message, int to_chan)
 	if (ig_to_tx_allow (pp3, to_chan)) {
 	  char radio [2400];
 	  snprintf (radio, sizeof(radio), "%s>%s%d%d%s:}%s",
-				save_audio_config_p->achan[to_chan].mycall,
+				save_audio_config_p->mycall[to_chan],
 				APP_TOCALL, MAJOR_VERSION, MINOR_VERSION,
 				save_igate_config_p->tx_via,
 				payload);
@@ -2354,7 +2704,8 @@ Send it now and remember that fact.
 Digipeat it.  Notice how it has a trailing CR.
 TODO:  Why is the CRC different?  Content looks the same.
 
-	ig_to_tx_remember [38] = ch0 d1 1447683040 27598 "N1ZKO-7>T2TS7X:`c6wl!i[/>"4]}[scanning]="
+	ig_to_tx_remember [38] = ch0 d1 1447683040 27598 "N1ZKO-7>T2TS7X:`c6wl!i[/>"4]}[scanning]=
+"
 	[0H] N1ZKO-7>T2TS7X,WB2OSZ-14*,WIDE2-1:`c6wl!i[/>"4]}[scanning]=<0x0d>
 
 Now we hear it again, thru a digipeater.

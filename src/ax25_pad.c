@@ -1,7 +1,7 @@
 //
 //    This file is part of Dire Wolf, an amateur radio packet TNC.
 //
-//    Copyright (C) 2011 , 2013, 2014, 2015, 2019  John Langner, WB2OSZ
+//    Copyright (C) 2011 , 2013, 2014, 2015, 2019, 2024  John Langner, WB2OSZ
 //
 //    This program is free software: you can redistribute it and/or modify
 //    it under the terms of the GNU General Public License as published by
@@ -174,6 +174,7 @@
 #include "regex.h"
 
 #if __WIN32__
+// TODO:  Why is this here, rather than in direwolf.h?
 char *strtok_r(char *str, const char *delim, char **saveptr);
 #endif
 
@@ -194,6 +195,7 @@ static volatile int last_seq_num = 0;
 
 #if AX25MEMDEBUG
 
+// TODO:  Make static and use function for any extern references.
 int ax25memdebug = 0;
 
 
@@ -355,11 +357,25 @@ void ax25_delete (packet_t this_p)
  *			  The SSID can be 2 alphanumeric characters, not just 1 to 15.
  *
  *			  We can just truncate the name because we will only
- *			  end up discarding it.    TODO:  check on this.
+ *			  end up discarding it.    TODO:  check on this.  WRONG! FIXME
  *
  * Returns:	Pointer to new packet object in the current implementation.
  *
  * Outputs:	Use the "get" functions to retrieve information in different ways.
+ *
+ * Evolution:	Originally this was written to handle only valid RF packets.
+ *		There are other places where the rules are not as strict.
+ *		Using decode_aprs with raw data seen on aprs.fi.  e.g.
+ *			EL-CA2JOT>RXTLM-1,TCPIP,qAR,CA2JOT::EL-CA2JOT:UNIT....
+ *			EA4YR>APBM1S,TCPIP*,qAS,BM2142POS:@162124z...
+ *		* Source addr might not comply to RF format.
+ *		* The q-construct has lower case.
+ *		* Tier-2 server name might not comply to RF format.
+ *		We have the same issue with the encapsulated part of a third-party packet.
+ *			WB2OSZ-5>APDW17,WIDE1-1,WIDE2-1:}WHO-IS>APJIW4,TCPIP,WB2OSZ-5*::WB2OSZ-7 :ack0
+ *
+ *		We need a way to keep and retrieve the original name.
+ *		This gets a little messy because the packet object is in the on air frame format.
  *
  *------------------------------------------------------------------------------*/
 
@@ -1340,7 +1356,13 @@ void ax25_get_addr_with_ssid (packet_t this_p, int n, char *station)
 	for (i=5; i>=0; i--) {
 	  if (station[i] == '\0') {
 	    text_color_set(DW_COLOR_ERROR);
-	    dw_printf ("Station address \"%s\" contains nul character.  AX.25 protocol requires trailing ASCII spaces when less than 6 characters.\n", station);
+	    dw_printf ("Station address \"%s\" contains nul character:", station);
+	    for (int k=0; k<6; k++) {
+	      dw_printf (" %02x", station[k]);
+	    }
+	    dw_printf ("\n");
+	    dw_printf ("AX.25 protocol requires trailing ASCII spaces when less than 6 characters.\n");
+	    break;
 	  }
 	  else if (station[i] == ' ')
 	    station[i] = '\0';
@@ -2576,6 +2598,59 @@ int ax25_get_c2 (packet_t this_p)
 	  }
 	}
 	return (-1);		/* not AX.25 */
+}
+
+
+/*------------------------------------------------------------------
+ *
+ * Function:	ax25_set_pid
+ *
+ * Purpose:	Set protocol ID in packet.
+ *
+ * Inputs:	this_p	- pointer to packet object.
+ *
+ *		pid - usually 0xF0 for APRS or 0xCF for NET/ROM.
+ *
+ * AX.25:	"The Protocol Identifier (PID) field appears in information
+ *		 frames (I and UI) only. It identifies which kind of
+ *		 Layer 3 protocol, if any, is in use."
+ *
+ *------------------------------------------------------------------*/
+
+void ax25_set_pid (packet_t this_p, int pid)
+{
+	assert (this_p->magic1 == MAGIC);
+	assert (this_p->magic2 == MAGIC);
+
+	// Some applications set this to 0 which is an error.
+	// Change 0 to 0xF0 meaning no layer 3 protocol.
+
+	if (pid == 0) {
+	  pid = AX25_PID_NO_LAYER_3;
+	}
+
+	// Sanity check: is it I or UI frame?
+
+	if (this_p->frame_len == 0) return;
+
+	ax25_frame_type_t frame_type;
+	cmdres_t cr;			// command or response.
+	char description[64];
+	int pf;				// Poll/Final.
+	int nr, ns;			// Sequence numbers.
+
+	frame_type = ax25_frame_type (this_p, &cr, description, &pf, &nr, &ns);
+
+	if (frame_type != frame_type_I && frame_type != frame_type_U_UI) {
+          text_color_set(DW_COLOR_ERROR);
+          dw_printf ("ax25_set_pid(0x%2x): Packet type is not I or UI.\n", pid);
+	  return;
+	}
+
+	// TODO: handle 2 control byte case.
+	if (this_p->num_addr >= 2) {
+	  this_p->frame_data[ax25_get_pid_offset(this_p)] = pid;
+	}
 }
 
 

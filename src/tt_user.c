@@ -106,7 +106,7 @@ static struct tt_user_s {
 	char symbol;				/* 'A' for traditional.  */
 						/* Can be any symbol for extended objects. */
 
-	char digit_suffix[3+1];			/* Suffix abbreviation as 3 digits. */
+	char digit_suffix[8];			/* Suffix abbreviation as 3 digits. */
 
 	time_t last_heard;			/* Timestamp when last heard.  */
 						/* User information will be deleted at some */
@@ -435,7 +435,7 @@ static void digit_suffix (char *callsign, char *suffix)
 	char *t;
 
 
-	strlcpy (suffix, "000", 5);			// TODO: should have proper size
+	strlcpy (suffix, "000", 8);			// TODO: should have proper size
 	tt_text_to_two_key (callsign, 0, two_key);
 	for (t = two_key; *t != '\0'; t++) {
 	  if (isdigit(*t)) {
@@ -819,10 +819,10 @@ static void xmit_object_report (int i, int first_time)
  */
 
 	if (save_tt_config_p->obj_xmit_chan >= 0) {
-	  strlcpy (stemp, save_audio_config_p->achan[save_tt_config_p->obj_xmit_chan].mycall, sizeof(stemp));
+	  strlcpy (stemp, save_audio_config_p->mycall[save_tt_config_p->obj_xmit_chan], sizeof(stemp));
 	}
 	else {
-	  strlcpy (stemp, save_audio_config_p->achan[save_tt_config_p->obj_recv_chan].mycall, sizeof(stemp));
+	  strlcpy (stemp, save_audio_config_p->mycall[save_tt_config_p->obj_recv_chan], sizeof(stemp));
 	}
 	strlcat (stemp, ">", sizeof(stemp));
 	strlcat (stemp, APP_TOCALL, sizeof(stemp));
@@ -1134,7 +1134,7 @@ int main (int argc, char *argv[])
 
 	memset (&my_audio_config, 0, sizeof(my_audio_config));
 
-	strlcpy (my_audio_config.achan[0].mycall, "WB2OSZ-15", sizeof(my_audio_config.achan[0].mycall));
+	strlcpy (my_audio_config.mycall[0], "WB2OSZ-15", sizeof(my_audio_config.mycall[0]));
 
 /* Fake TT gateway config. */
 

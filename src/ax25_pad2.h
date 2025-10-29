@@ -20,7 +20,7 @@
 
 
 
-packet_t ax25_u_frame_debug (char addrs[AX25_MAX_ADDRS][AX25_MAX_ADDR_LEN], int num_addr, cmdres_t cr, ax25_frame_type_t ftype, int pf, int pid, unsigned char *pinfo, int info_len, char *src_file, int src_line);
+packet_t ax25_u_frame_debug (char addrs[][AX25_MAX_ADDR_LEN], int num_addr, cmdres_t cr, ax25_frame_type_t ftype, int pf, int pid, unsigned char *pinfo, int info_len, char *src_file, int src_line);
 
 packet_t ax25_s_frame_debug (char addrs[AX25_MAX_ADDRS][AX25_MAX_ADDR_LEN], int num_addr, cmdres_t cr, ax25_frame_type_t ftype, int modulo, int nr, int pf, unsigned char *pinfo, int info_len, char *src_file, int src_line);
 

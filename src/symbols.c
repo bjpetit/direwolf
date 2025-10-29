@@ -1012,8 +1012,21 @@ int main (int argc, char *argv[])
 	symbols_from_dest_or_src ('T', "W1ABC", "GPSOD9", &symtab, &symbol);
 	if (symtab != '9' || symbol != '#') dw_printf ("ERROR 1-5\n");
 
-	symbols_from_dest_or_src ('T', "W1ABC-14", "XXXXXX", &symtab, &symbol);
-	if (symtab != '/' || symbol != 'k') dw_printf ("ERROR 1-6\n");
+	// Remove test for obsolete feature.
+	// Back in the early days of APRS, microcontrollers were very
+	// resource limited.  Rather than parsing the GPS sentence and
+	// converting to one of the Position Report formats, the NMEA
+	// GPS sentence was copied directly to packet's information field.
+	// This has been obsolete for a long time.
+	// The destination field could contain a symbol represented by
+	// GPSxxx.  If that was not found, then the source SSID was used
+	// to guess at a possibly appropriate symbol.
+	// This caused confusion for things like messages or telemetry
+	// without a location.  Where did the symbols come from?
+	// We are in the 21st Century.  It's time clean out some of this
+	// obsolete cruft no longer needed.
+	//symbols_from_dest_or_src ('T', "W1ABC-14", "XXXXXX", &symtab, &symbol);
+	//if (symtab != '/' || symbol != 'k') dw_printf ("ERROR 1-6\n");
 
 	symbols_from_dest_or_src ('T', "W1ABC", "GPS???", &symtab, &symbol);
 	/* Outputs are left alone if symbol can't be determined. */

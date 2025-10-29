@@ -22,7 +22,7 @@
  * Module:      ptt.c
  *
  * Purpose:   	Activate the output control lines for push to talk (PTT) and other purposes.
- *		
+ *
  * Description:	Traditionally this is done with the RTS signal of the serial port.
  *
  *		If we have two radio channels and only one serial port, DTR
@@ -37,7 +37,7 @@
  *
  *		This is hardcoded to use the primary motherboard parallel
  *		printer port at I/O address 0x378.  This might work with
- *		a PCI card configured to use the same address if the 
+ *		a PCI card configured to use the same address if the
  *		motherboard does not have a built in parallel port.
  *		It won't work with a USB-to-parallel-printer-port adapter.
  *
@@ -130,7 +130,7 @@
 	USB-Audio adapters.  It would be nice to have a little script which lists all
 	of the USB-Audio adapters and the corresponding /dev/hidraw device.
 	( We now have it.  The included "cm108" application. )
-	
+
 	In version 1.5 we have a flexible, easy to use implementation for Linux.
 	Windows would be a lot of extra work because USB devices are nothing like Linux.
 	We'd be starting from scratch to figure out how to do it.
@@ -162,7 +162,19 @@
 #include <hamlib/rig.h>
 #endif
 
+#ifdef USE_GPIOD
+#if LIBGPIOD_VERSION_MAJOR >= 2
+#include "gpio_common.h"
+#else
+#include <gpiod.h>
+#endif
+#endif
+
 /* So we can have more common code for fd. */
+/* On Windows HANDLE is a pointer. */
+/* Here, for Linux, we make HANDLE int for a file descriptor. */
+/* It would be clearer if a new type such as MY_FD_HANDLE was */
+/* defined as either int or HANDLE. */
 typedef int HANDLE;
 #define INVALID_HANDLE_VALUE (-1)
 
@@ -179,19 +191,65 @@ typedef int HANDLE;
 #include "demod.h"	// to mute recv audio during xmit if half duplex.
 
 
-#if __WIN32__
+#if __WIN32__	// Windows version
 
-#define RTS_ON(fd) 	EscapeCommFunction(fd,SETRTS);
-#define RTS_OFF(fd) 	EscapeCommFunction(fd,CLRRTS);
-#define DTR_ON(fd)    	EscapeCommFunction(fd,SETDTR);
-#define DTR_OFF(fd)	EscapeCommFunction(fd,CLRDTR);
+// These return nonzero for success, zero for failure.
+// Return type is actually BOOL.
 
-#else
+#define RTS_ON(fd) 	{ int ok = EscapeCommFunction(fd,SETRTS); \
+				if ( ! ok) { \
+					text_color_set(DW_COLOR_ERROR); \
+					dw_printf ("Error setting RTS for channel %d.\n", chan); \
+				} \
+			}
+#define RTS_OFF(fd) 	{ int ok = EscapeCommFunction(fd,CLRRTS); \
+				if ( ! ok) { \
+					text_color_set(DW_COLOR_ERROR); \
+					dw_printf ("Error clearing RTS for channel %d.\n", chan); \
+				} \
+			}
+#define DTR_ON(fd)    	{ int ok = EscapeCommFunction(fd,SETDTR); \
+				if ( ! ok) { \
+					text_color_set(DW_COLOR_ERROR); \
+					dw_printf ("Error setting DTR for channel %d.\n", chan); \
+				} \
+			}
+#define DTR_OFF(fd)	{ int ok = EscapeCommFunction(fd,CLRDTR); \
+				if ( ! ok) { \
+					text_color_set(DW_COLOR_ERROR); \
+					dw_printf ("Error clearing DTR for channel %d.\n", chan); \
+				} \
+			}
 
-#define RTS_ON(fd) 	{ int stuff; ioctl (fd, TIOCMGET, &stuff); stuff |= TIOCM_RTS;  ioctl (fd, TIOCMSET, &stuff); }
-#define RTS_OFF(fd) 	{ int stuff; ioctl (fd, TIOCMGET, &stuff); stuff &= ~TIOCM_RTS; ioctl (fd, TIOCMSET, &stuff); }
-#define DTR_ON(fd)    	{ int stuff; ioctl (fd, TIOCMGET, &stuff); stuff |= TIOCM_DTR;  ioctl (fd, TIOCMSET, &stuff); }
-#define DTR_OFF(fd)	{ int stuff; ioctl (fd, TIOCMGET, &stuff); stuff &= ~TIOCM_DTR;	ioctl (fd, TIOCMSET, &stuff); }
+#else	// Linux version
+
+// On success, 0 is returned.  On error, -1 is returned, and errno is
+// set to indicate the error.
+
+#define RTS_ON(fd) 	{ int stuff; ioctl (fd, TIOCMGET, &stuff); stuff |= TIOCM_RTS;  int err = ioctl (fd, TIOCMSET, &stuff); \
+				if ( err != 0 ) { \
+					text_color_set(DW_COLOR_ERROR); \
+					dw_printf ("Error setting RTS for channel %d, errno %d\n", chan, errno); \
+				} \
+			}
+#define RTS_OFF(fd) 	{ int stuff; ioctl (fd, TIOCMGET, &stuff); stuff &= ~TIOCM_RTS; int err = ioctl (fd, TIOCMSET, &stuff); \
+				if ( err != 0 ) { \
+					text_color_set(DW_COLOR_ERROR); \
+					dw_printf ("Error clearing RTS for channel %d, errno %d\n", chan, errno); \
+				} \
+			}
+#define DTR_ON(fd)    	{ int stuff; ioctl (fd, TIOCMGET, &stuff); stuff |= TIOCM_DTR;  int err = ioctl (fd, TIOCMSET, &stuff); \
+				if ( err != 0 ) { \
+					text_color_set(DW_COLOR_ERROR); \
+					dw_printf ("Error setting DTR for channel %d, errno %d\n", chan, errno); \
+				} \
+			}
+#define DTR_OFF(fd)	{ int stuff; ioctl (fd, TIOCMGET, &stuff); stuff &= ~TIOCM_DTR;	int err = ioctl (fd, TIOCMSET, &stuff); \
+				if ( err != 0 ) { \
+					text_color_set(DW_COLOR_ERROR); \
+					dw_printf ("Error clearing DTR for channel %d, errno %d\n", chan, errno); \
+				} \
+			}
 
 #define LPT_IO_ADDR 0x378
 
@@ -468,6 +526,20 @@ void export_gpio(int ch, int ot, int invert, int direction)
 	    text_color_set(DW_COLOR_ERROR);
 	    dw_printf ("Error writing \"%s\" to %s, errno=%d\n", stemp, gpio_export_path, e);
 	    dw_printf ("%s\n", strerror(e));
+
+	    if (e == 22) {
+	      // It appears that error 22 occurs when sysfs gpio is not available.
+	      // (See https://github.com/wb2osz/direwolf/issues/503)
+	      //
+	      // The solution might be to use the new gpiod approach.
+
+	      dw_printf ("It looks like gpio with sysfs is not supported on this operating system.\n");
+	      dw_printf ("Rather than the following form, in the configuration file,\n");
+	      dw_printf ("    PTT GPIO  %s\n", stemp);
+	      dw_printf ("try using gpiod form instead.  e.g.\n");
+	      dw_printf ("    PTT GPIOD  gpiochip0  %s\n", stemp);
+	      dw_printf ("You can get a list of gpio chip names and corresponding I/O lines with \"gpioinfo\" command.\n");
+	    }
 	    exit (1);
 	  }
 	}
@@ -634,6 +706,42 @@ void export_gpio(int ch, int ot, int invert, int direction)
 	get_access_to_gpio (gpio_value_path);
 }
 
+#if defined(USE_GPIOD)
+
+// TODO:  Maybe move to gpio_common.c or rewrite.
+
+#if LIBGPIOD_VERSION_MAJOR == 1
+
+int gpiod_probe(const char *chip_dev_path, int line_number)
+{
+	// chip_dev_path must be complete device path such as /dev/gpiochip3
+
+	struct gpiod_chip *chip;
+	chip = gpiod_chip_open(chip_dev_path);
+	if (chip == NULL) {
+		text_color_set(DW_COLOR_ERROR);
+		dw_printf ("Can't open GPIOD chip %s.\n", chip_dev_path);
+		return -1;
+	}
+
+	struct gpiod_line *line;
+	line = gpiod_chip_get_line(chip, line_number);
+	if (line == NULL) {
+		text_color_set(DW_COLOR_ERROR);
+		dw_printf ("Can't get GPIOD line %d.\n", line_number);
+		return -1;
+	}
+	if (ptt_debug_level >= 2) {
+		text_color_set(DW_COLOR_DEBUG);
+		dw_printf("GPIOD probe OK. Chip: %s line: %d\n", chip_dev_path, line_number);
+	}
+	return 0;
+}
+
+#endif	// LIBGPIOD_VERSION_MAJOR == 1
+
+#endif	/* USE_GPIOD */
+
 #endif   /* not __WIN32__ */
 
 
@@ -650,7 +758,8 @@ void export_gpio(int ch, int ot, int invert, int direction)
  *			ptt_method	Method for PTT signal. 
  *					PTT_METHOD_NONE - not configured.  Could be using VOX. 
  *					PTT_METHOD_SERIAL - serial (com) port. 
- *					PTT_METHOD_GPIO - general purpose I/O. 
+ *					PTT_METHOD_GPIO - general purpose I/O (sysfs). 
+ *					PTT_METHOD_GPIOD - general purpose I/O (libgpiod). 
  *					PTT_METHOD_LPT - Parallel printer port. 
  *                  			PTT_METHOD_HAMLIB - HAMLib rig control.
  *					PTT_METHOD_CM108 - GPIO pins of CM108 etc. USB Audio.
@@ -679,19 +788,19 @@ void export_gpio(int ch, int ot, int invert, int direction)
  *
  * Outputs:	Remember required information for future use.
  *
- * Description:	
+ * Description:
  *
  *--------------------------------------------------------------------*/
 
 
 
 
-static HANDLE ptt_fd[MAX_CHANS][NUM_OCTYPES];	
+static HANDLE ptt_fd[MAX_RADIO_CHANS][NUM_OCTYPES];
 					/* Serial port handle or fd.  */
-					/* Could be the same for two channels */	
+					/* Could be the same for two channels */
 					/* if using both RTS and DTR. */
 #if USE_HAMLIB
-static RIG *rig[MAX_CHANS][NUM_OCTYPES];
+static RIG *rig[MAX_RADIO_CHANS][NUM_OCTYPES];
 #endif
 
 static char otnames[NUM_OCTYPES][8];
@@ -703,6 +812,12 @@ void ptt_init (struct audio_s *audio_config_p)
 #if __WIN32__
 #else
 	int using_gpio;
+#endif
+
+#if USE_GPIOD
+#if LIBGPIOD_VERSION_MAJOR >= 2
+	gpio_common_init();
+#endif
 #endif
 
 #if DEBUG
@@ -717,7 +832,7 @@ void ptt_init (struct audio_s *audio_config_p)
 	strlcpy (otnames[OCTYPE_CON], "CON", sizeof(otnames[OCTYPE_CON]));
 
 
-	for (ch = 0; ch < MAX_CHANS; ch++) {
+	for (ch = 0; ch < MAX_RADIO_CHANS; ch++) {
 	  int ot;
 
 	  for (ot = 0; ot < NUM_OCTYPES; ot++) {
@@ -729,12 +844,13 @@ void ptt_init (struct audio_s *audio_config_p)
 	    if (ptt_debug_level >= 2) {
 
 	      text_color_set(DW_COLOR_DEBUG);
-              dw_printf ("ch=%d, %s method=%d, device=%s, line=%d, gpio=%d, lpt_bit=%d, invert=%d\n",
+              dw_printf ("ch=%d, %s method=%d, device=%s, line=%d, name=%s, gpio=%d, lpt_bit=%d, invert=%d\n",
 		ch,
 		otnames[ot],
-		audio_config_p->achan[ch].octrl[ot].ptt_method, 
+		audio_config_p->achan[ch].octrl[ot].ptt_method,
 		audio_config_p->achan[ch].octrl[ot].ptt_device,
 		audio_config_p->achan[ch].octrl[ot].ptt_line,
+		audio_config_p->achan[ch].octrl[ot].out_gpio_name,
 		audio_config_p->achan[ch].octrl[ot].out_gpio_num,
 		audio_config_p->achan[ch].octrl[ot].ptt_lpt_bit,
 		audio_config_p->achan[ch].octrl[ot].ptt_invert);
@@ -746,7 +862,7 @@ void ptt_init (struct audio_s *audio_config_p)
  * Set up serial ports.
  */
 
-	for (ch = 0; ch < MAX_CHANS; ch++) {
+	for (ch = 0; ch < MAX_RADIO_CHANS; ch++) {
 
 	  if (audio_config_p->chan_medium[ch] == MEDIUM_RADIO) {
 	    int ot;
@@ -790,7 +906,7 @@ void ptt_init (struct audio_s *audio_config_p)
 	        }
 
 	        if ( ! same_device_used) {
-	
+
 #if __WIN32__
 	          char bettername[50];
 	          // Bug fix in release 1.1 - Need to munge name for COM10 and up.
@@ -835,12 +951,17 @@ void ptt_init (struct audio_s *audio_config_p)
 	          /* Don't try using it later if device open failed. */
 
 	          audio_config_p->achan[ch].octrl[ot].ptt_method = PTT_METHOD_NONE;
+
+	          // Version 1.8 - Terminate - senseless to go on.
+	          // Someone could miss error message and be confused about no PTT signal later.
+
+	          exit(EXIT_FAILURE);
 	        }
 
 /*
  * Set initial state off.
  * ptt_set will invert output signal if appropriate.
- */	  
+ */
 	        ptt_set (ot, ch, 0);
 
 	      }    /* if serial method. */
@@ -849,7 +970,7 @@ void ptt_init (struct audio_s *audio_config_p)
 	}    /* For each channel. */
 
 
-/* 
+/*
  * Set up GPIO - for Linux only.
  */
 
@@ -861,7 +982,7 @@ void ptt_init (struct audio_s *audio_config_p)
  */
 
 	using_gpio = 0;
-	for (ch=0; ch<MAX_CHANS; ch++) {
+	for (ch=0; ch<MAX_RADIO_CHANS; ch++) {
 	  if (save_audio_config_p->chan_medium[ch] == MEDIUM_RADIO) {
 	    int ot;
 	    for (ot = 0; ot < NUM_OCTYPES; ot++) {
@@ -880,13 +1001,43 @@ void ptt_init (struct audio_s *audio_config_p)
 	if (using_gpio) {
 	  get_access_to_gpio ("/sys/class/gpio/export");
 	}
+#if defined(USE_GPIOD)
+    // GPIOD
+	for (ch = 0; ch < MAX_RADIO_CHANS; ch++) {
+	  if (save_audio_config_p->chan_medium[ch] == MEDIUM_RADIO) {
+	    for (int ot = 0; ot < NUM_OCTYPES; ot++) {
+	      if (audio_config_p->achan[ch].octrl[ot].ptt_method == PTT_METHOD_GPIOD) {
+	        const char *chip_name = audio_config_p->achan[ch].octrl[ot].out_gpio_name;
+	        int line_number = audio_config_p->achan[ch].octrl[ot].out_gpio_num;
 
+#if LIBGPIOD_VERSION_MAJOR >= 2
+	        audio_config_p->achan[ch].octrl[ot].gpio_num = gpio_common_open_line(chip_name, line_number, false);
+	        if (audio_config_p->achan[ch].octrl[ot].gpio_num == GPIO_COMMON_UNKNOWN) {
+#else
+	        int rc = gpiod_probe(chip_name, line_number);
+	        if (rc < 0) {
+#endif
+	          text_color_set(DW_COLOR_ERROR);
+		  //No, people won't notice the error message and be confused.  Just terminate.
+	          //dw_printf ("Disable PTT for channel %d\n", ch);
+	          //audio_config_p->achan[ch].octrl[ot].ptt_method = PTT_METHOD_NONE;
+	          dw_printf ("Terminating due to failed PTT on channel %d\n", ch);
+		  exit (EXIT_FAILURE);
+	        } else {
+	          // Set initial state off ptt_set will invert output signal if appropriate.
+	          ptt_set (ot, ch, 0);
+	        }
+	      }
+	    }
+	  }
+	}
+#endif /* USE_GPIOD */
 /*
- * We should now be able to create the device nodes for 
+ * We should now be able to create the device nodes for
  * the pins we want to use.
  */
-	    
-	for (ch = 0; ch < MAX_CHANS; ch++) {
+
+	for (ch = 0; ch < MAX_RADIO_CHANS; ch++) {
 	  if (save_audio_config_p->chan_medium[ch] == MEDIUM_RADIO) {
 
 	    int ot;	// output control type, PTT, DCD, CON, ...
@@ -910,7 +1061,7 @@ void ptt_init (struct audio_s *audio_config_p)
 
 /*
  * Set up parallel printer port.
- * 
+ *
  * Restrictions:
  * 	Only the primary printer port.
  * 	For x86 Linux only.
@@ -918,7 +1069,7 @@ void ptt_init (struct audio_s *audio_config_p)
 
 #if  ( defined(__i386__) || defined(__x86_64__) ) && ( defined(__linux__) || defined(__unix__) )
 
-	for (ch = 0; ch < MAX_CHANS; ch++) {
+	for (ch = 0; ch < MAX_RADIO_CHANS; ch++) {
 	  if (save_audio_config_p->chan_medium[ch] == MEDIUM_RADIO) {
 	    int ot;
 	    for (ot = 0; ot < NUM_OCTYPES; ot++) {
@@ -932,7 +1083,7 @@ void ptt_init (struct audio_s *audio_config_p)
 
 	        int same_device_used = 0;
 	        int j, k;
-	
+
 	        for (j = ch; j >= 0; j--) {
 	          if (audio_config_p->chan_medium[j] == MEDIUM_RADIO) {
 		    for (k = ((j==ch) ? (ot - 1) : (NUM_OCTYPES-1)); k >= 0; k--) {
@@ -967,12 +1118,12 @@ void ptt_init (struct audio_s *audio_config_p)
 
 	          audio_config_p->achan[ch].octrl[ot].ptt_method = PTT_METHOD_NONE;
 	        }
-	    
+
 
 /*
  * Set initial state off.
  * ptt_set will invert output signal if appropriate.
- */	  
+ */
 	        ptt_set (ot, ch, 0);
 
 	      }       /* if parallel printer port method. */
@@ -985,7 +1136,7 @@ void ptt_init (struct audio_s *audio_config_p)
 #endif /* x86 Linux */
 
 #ifdef USE_HAMLIB
-	for (ch = 0; ch < MAX_CHANS; ch++) {
+	for (ch = 0; ch < MAX_RADIO_CHANS; ch++) {
 	  if (save_audio_config_p->chan_medium[ch] == MEDIUM_RADIO) {
 	    int ot;
 	    for (ot = 0; ot < NUM_OCTYPES; ot++) {
@@ -1097,7 +1248,7 @@ void ptt_init (struct audio_s *audio_config_p)
 
 #if USE_CM108
 
-	for (ch = 0; ch < MAX_CHANS; ch++) {
+	for (ch = 0; ch < MAX_RADIO_CHANS; ch++) {
 
 	  if (audio_config_p->chan_medium[ch] == MEDIUM_RADIO) {
 	    int ot;
@@ -1119,11 +1270,31 @@ void ptt_init (struct audio_s *audio_config_p)
 
 /* Why doesn't it transmit?  Probably forgot to specify PTT option. */
 
-	for (ch=0; ch<MAX_CHANS; ch++) {
+	for (ch=0; ch<MAX_RADIO_CHANS; ch++) {
 	  if (audio_config_p->chan_medium[ch] == MEDIUM_RADIO) {
 	    if(audio_config_p->achan[ch].octrl[OCTYPE_PTT].ptt_method == PTT_METHOD_NONE) {
 	      text_color_set(DW_COLOR_INFO);
-	      dw_printf ("Note: PTT not configured for channel %d. (Ignore this if using VOX.)\n", ch);
+	      dw_printf ("\n");
+	      dw_printf ("Note: PTT not configured for channel %d. (OK if using VOX.)\n", ch);
+	      dw_printf ("When using VOX, ensure that it adds very little delay (e.g. 10-20) milliseconds\n");
+	      dw_printf ("between the time that transmit audio ends and PTT is deactivated.\n");
+	      dw_printf ("For example, if using a SignaLink USB, turn the DLY control all the\n");
+	      dw_printf ("way counter clockwise.\n");
+	      dw_printf ("\n");
+	      dw_printf ("Using VOX built in to the radio is a VERY BAD idea.  This is intended\n");
+	      dw_printf ("for voice operation, with gaps in the sound, and typically has a delay of about a\n");
+	      dw_printf ("half second between the time the audio stops and the transmitter is turned off.\n");
+	      dw_printf ("When using APRS your transmiter will be sending a quiet carrier for\n");
+	      dw_printf ("about a half second after your packet ends.  This may interfere with the\n");
+	      dw_printf ("the next station to transmit.  This is being inconsiderate.\n");
+	      dw_printf ("\n");
+	      dw_printf ("If you are trying to use VOX with connected mode packet, expect\n");
+	      dw_printf ("frustration and disappointment.  Connected mode involves rapid responses\n");
+	      dw_printf ("which you will probably miss because your transmitter is still on when\n");
+	      dw_printf ("the response is being transmitted.\n");
+	      dw_printf ("\n");
+	      dw_printf ("Read the User Guide 'Transmit Timing' section for more details.\n");
+	      dw_printf ("\n");
 	    }
 	  }
 	}
@@ -1165,14 +1336,14 @@ void ptt_set (int ot, int chan, int ptt_signal)
 	int ptt2 = ptt_signal;
 
 	assert (ot >= 0 && ot < NUM_OCTYPES);
-	assert (chan >= 0 && chan < MAX_CHANS);
+	assert (chan >= 0 && chan < MAX_RADIO_CHANS);
 
 	if (ptt_debug_level >= 1) {
 	  text_color_set(DW_COLOR_DEBUG);
 	  dw_printf ("%s %d = %d\n", otnames[ot], chan, ptt_signal);
 	}
 
-	assert (chan >= 0 && chan < MAX_CHANS);
+	assert (chan >= 0 && chan < MAX_RADIO_CHANS);
 
 	if (   save_audio_config_p->chan_medium[chan] != MEDIUM_RADIO) {
 	  text_color_set(DW_COLOR_ERROR);
@@ -1222,9 +1393,11 @@ void ptt_set (int ot, int chan, int ptt_signal)
 	  if (save_audio_config_p->achan[chan].octrl[ot].ptt_line == PTT_LINE_RTS) {
 
 	    if (ptt) {
+	      //dw_printf ("DEBUG: RTS ON chan %d, fd %d, sizeof HANDLE %d\n", chan, (int)(ptt_fd[chan][ot]), (int)(sizeof(HANDLE)));
 	      RTS_ON(ptt_fd[chan][ot]);
 	    }
 	    else {
+	      //dw_printf ("DEBUG: RTS OFF chan %d, fd %d\n", chan, (int)(ptt_fd[chan][ot]));
 	      RTS_OFF(ptt_fd[chan][ot]);
 	    }
 	  }
@@ -1298,8 +1471,26 @@ void ptt_set (int ot, int chan, int ptt_signal)
 	  close (fd);
 
 	}
+
+#if defined(USE_GPIOD)
+	if (save_audio_config_p->achan[chan].octrl[ot].ptt_method == PTT_METHOD_GPIOD) {
+		const char *chip = save_audio_config_p->achan[chan].octrl[ot].out_gpio_name;
+		int line = save_audio_config_p->achan[chan].octrl[ot].out_gpio_num;
+
+
+#if LIBGPIOD_VERSION_MAJOR >= 2
+		int rc = gpio_common_set(save_audio_config_p->achan[chan].octrl[ot].gpio_num, ptt);
+#else
+		int rc = gpiod_ctxless_set_value(chip, line, ptt, false, "direwolf", NULL, NULL);
 #endif
-	
+		if (ptt_debug_level >= 1) {
+			text_color_set(DW_COLOR_DEBUG);
+			dw_printf("PTT_METHOD_GPIOD chip: %s line: %d ptt: %d  rc: %d\n", chip, line, ptt, rc);
+		}
+	}
+#endif /* USE_GPIOD */
+#endif
+
 /*
  * Using parallel printer port?
  */
@@ -1310,7 +1501,7 @@ void ptt_set (int ot, int chan, int ptt_signal)
 		ptt_fd[chan][ot] != INVALID_HANDLE_VALUE) {
 
 	  char lpt_data;
-	  //ssize_t n;		
+	  //ssize_t n;
 
 	  lseek (ptt_fd[chan][ot], (off_t)LPT_IO_ADDR, SEEK_SET);
 	  if (read (ptt_fd[chan][ot], &lpt_data, (size_t)1) != 1) {
@@ -1396,7 +1587,7 @@ void ptt_set (int ot, int chan, int ptt_signal)
 int get_input (int it, int chan)
 {
 	assert (it >= 0 && it < NUM_ICTYPES);
-	assert (chan >= 0 && chan < MAX_CHANS);
+	assert (chan >= 0 && chan < MAX_RADIO_CHANS);
 
 	if (   save_audio_config_p->chan_medium[chan] != MEDIUM_RADIO) {
 	  text_color_set(DW_COLOR_ERROR);
@@ -1461,7 +1652,7 @@ void ptt_term (void)
 {
 	int n;
 
-	for (n = 0; n < MAX_CHANS; n++) {
+	for (n = 0; n < MAX_RADIO_CHANS; n++) {
 	  if (save_audio_config_p->chan_medium[n] == MEDIUM_RADIO) {
 	    int ot;
 	    for (ot = 0; ot < NUM_OCTYPES; ot++) {
@@ -1470,7 +1661,7 @@ void ptt_term (void)
 	  }
 	}
 
-	for (n = 0; n < MAX_CHANS; n++) {
+	for (n = 0; n < MAX_RADIO_CHANS; n++) {
 	  if (save_audio_config_p->chan_medium[n] == MEDIUM_RADIO) {
 	    int ot;
 	    for (ot = 0; ot < NUM_OCTYPES; ot++) {
@@ -1488,7 +1679,7 @@ void ptt_term (void)
 
 #ifdef USE_HAMLIB
 
-	for (n = 0; n < MAX_CHANS; n++) {
+	for (n = 0; n < MAX_RADIO_CHANS; n++) {
 	  if (save_audio_config_p->chan_medium[n] == MEDIUM_RADIO) {
 	    int ot;
 	    for (ot = 0; ot < NUM_OCTYPES; ot++) {

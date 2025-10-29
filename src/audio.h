@@ -5,7 +5,7 @@
  *
  * Purpose:   	Interface to audio device commonly called a "sound card"
  *		for historical reasons.
- *		
+ *
  *---------------------------------------------------------------*/
 
 
@@ -16,19 +16,21 @@
 #include <hamlib/rig.h>
 #endif
 
-#include "direwolf.h"		/* for MAX_CHANS used throughout the application. */
+#include "direwolf.h"		/* for MAX_RADIO_CHANS and MAX_TOTAL_CHANS used throughout the application. */
 #include "ax25_pad.h"		/* for AX25_MAX_ADDR_LEN */
 #include "version.h"
-				
+#include "gpio_common.h"
+
 
 /*
- * PTT control. 
+ * PTT control.
  */
 
-enum ptt_method_e { 
+enum ptt_method_e {
 	PTT_METHOD_NONE,	/* VOX or no transmit. */
 	PTT_METHOD_SERIAL,	/* Serial port RTS or DTR. */
-	PTT_METHOD_GPIO,	/* General purpose I/O, Linux only. */
+	PTT_METHOD_GPIO,	/* General purpose I/O using sysfs, deprecated after 2020, Linux only. */
+	PTT_METHOD_GPIOD,	/* General purpose I/O, using libgpiod, Linux only. */
 	PTT_METHOD_LPT,	    	/* Parallel printer port, Linux only. */
 	PTT_METHOD_HAMLIB, 	/* HAMLib, Linux only. */
 	PTT_METHOD_CM108 };	/* GPIO pin of CM108/CM119/etc.  Linux only. */
@@ -58,11 +60,11 @@ typedef enum retry_e {
 enum medium_e { MEDIUM_NONE = 0,	// Channel is not valid for use.
 		MEDIUM_RADIO,		// Internal modem for radio.
 		MEDIUM_IGATE,		// Access IGate as ordinary channel.
-		MEDIUM_NETTNC };	// Remote network TNC.  (possible future)
+		MEDIUM_NETTNC };	// Remote network TNC.  (new in 1.8)
 
 
 typedef enum sanity_e { SANITY_APRS, SANITY_AX25, SANITY_NONE } sanity_t;
-			 
+
 
 struct audio_s {
 
@@ -74,16 +76,23 @@ struct audio_s {
 
 	    /* Properties of the sound device. */
 
-	    int defined;		/* Was device defined? */
-					/* First one defaults to yes. */
+	    int defined;		/* Was device defined?   0=no.  >0 for yes.  */
+					/* First channel defaults to 2 for yes with default config. */
+					/* 1 means it was defined by user. */
+
+	    int copy_from;		/* >=0  means copy contents from another audio device. */
+					/* In this case we don't have device names, below. */
+					/* Num channels, samples/sec, and bit/sample are copied from */
+					/* original device and can't be changed. */
+					/* -1 for normal case. */
 
 	    char adevice_in[80];	/* Name of the audio input device (or file?). */
-					/* TODO: Can be "-" to read from stdin. */
+					/* Can be udp:nnn for UDP or "-" to read from stdin. */
 
 	    char adevice_out[80];	/* Name of the audio output device (or file?). */
 
 	    int num_channels;		/* Should be 1 for mono or 2 for stereo. */
-	    int samples_per_sec;	/* Audio sampling rate.  Typically 11025, 22050, or 44100. */
+	    int samples_per_sec;	/* Audio sampling rate.  Typically 11025, 22050, 44100, or 48000. */
 	    int bits_per_sample;	/* 8 (unsigned char) or 16 (signed short). */
 
 	} adev[MAX_ADEVS];
@@ -107,12 +116,6 @@ struct audio_s {
 	float recv_ber;			/* Receive Bit Error Rate (BER). */
 					/* Probability of inverting a bit coming out of the modem. */
 
-	//int fx25_xmit_enable;		/* Enable transmission of FX.25.  */
-					/* See fx25_init.c for explanation of values. */
-					/* Initially this applies to all channels. */
-					/* This should probably be per channel. One step at a time. */
-					/* v1.7 - replaced by layer2_xmit==LAYER2_FX25 */
-
 	int fx25_auto_enable;		/* Turn on FX.25 for current connected mode session */
 					/* under poor conditions. */
 					/* Set to 0 to disable feature. */
@@ -131,9 +134,18 @@ struct audio_s {
 	/* originally a "channel" was always connected to an internal modem. */
 	/* In version 1.6, this is generalized so that a channel (as seen by client application) */
 	/* can be connected to something else.  Initially, this will allow application */
-	/* access to the IGate.  Later we might have network TNCs or other internal functions. */
+	/* access to the IGate.  In version 1.8 we add network KISS TNC. */
+
+	// Watch out for maximum number of channels.
+	//	MAX_CHANS - Originally, this was 6 for internal modem adio channels. Has been phased out.
+	// After adding virtual channels (IGate, network TNC), this is split into two different numbers:
+	//	MAX_RADIO_CHANNELS - For internal modems.
+	//	MAX_TOTAL_CHANNELS - limited by KISS channels/ports.  Needed for digipeating, filtering, etc.
 
 	// Properties for all channels.
+
+	char mycall[MAX_TOTAL_CHANS][AX25_MAX_ADDR_LEN];  /* Call associated with this radio channel. */
+							/* Could all be the same or different. */
 
 	enum medium_e chan_medium[MAX_TOTAL_CHANS];
 					// MEDIUM_NONE for invalid.
@@ -145,6 +157,14 @@ struct audio_s {
 					/* -1 for none. */
 					/* Redundant but it makes things quicker and simpler */
 					/* than always searching thru above. */
+
+	// Applies only to network TNC type channels.
+
+	char nettnc_addr[MAX_TOTAL_CHANS][80];		// Network TNC address:  hostname or IP addr.
+
+	int nettnc_port[MAX_TOTAL_CHANS];		// Network TNC TCP port.
+
+
 
 	/* Properties for each radio channel, common to receive and transmit. */
 	/* Can be different for each radio channel. */
@@ -163,8 +183,6 @@ struct audio_s {
 	    // int audio_source;	// Default would be [0,1,2,3,4,5]
 
 	    // What else should be moved out of structure and enlarged when NETTNC is implemented.  ???
-	    char mycall[AX25_MAX_ADDR_LEN];      /* Call associated with this radio channel. */
-                                	/* Could all be the same or different. */
 
 
 	    enum modem_t { MODEM_AFSK, MODEM_BASEBAND, MODEM_SCRAMBLE, MODEM_QPSK, MODEM_8PSK, MODEM_OFF, MODEM_16_QAM, MODEM_64_QAM, MODEM_AIS, MODEM_EAS } modem_type;
@@ -175,7 +193,7 @@ struct audio_s {
 					/* Might try MFJ-2400 / CCITT v.26 / Bell 201 someday. */
 					/* No modem.  Might want this for DTMF only channel. */
 
-	    enum layer2_t { LAYER2_AX25 = 0, LAYER2_FX25, LAYER2_IL2P } layer2_xmit;
+	    enum layer2_t { LAYER2_AX25 = 0, LAYER2_FX25, LAYER2_IL2P } layer2_xmit;	// Must keep in sync with layer2_tx, below.
 
 					// IL2P - New for version 1.7.
 					// New layer 2 with FEC.  Much less overhead than FX.25 but no longer backward compatible.
@@ -259,7 +277,7 @@ struct audio_s {
 
 
 	/* Additional properties for transmit. */
-	
+
 	/* Originally we had control outputs only for PTT. */
 	/* In version 1.2, we generalize this to allow others such as DCD. */
 	/* In version 1.4 we add CON for connected to another station. */
@@ -271,8 +289,8 @@ struct audio_s {
 #define OCTYPE_CON 2
 
 #define NUM_OCTYPES 3		/* number of values above.   i.e. last value +1. */
-	
-	    struct {  		
+
+	    struct {
 
 	        ptt_method_t ptt_method; /* none, serial port, GPIO, LPT, HAMLIB, CM108. */
 
@@ -287,7 +305,7 @@ struct audio_s {
 					/* have a name like /dev/hidraw1 for Linux or */
 					/* \\?\hid#vid_0d8c&pid_0008&mi_03#8&39d3555&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030} */
 					/* for Windows.  Largest observed was 95 but add some extra to be safe. */
-			
+
 	        ptt_line_t ptt_line;	/* Control line when using serial port. PTT_LINE_RTS, PTT_LINE_DTR. */
 	        ptt_line_t ptt_line2;	/* Optional second one:  PTT_LINE_NONE when not used. */
 
@@ -304,6 +322,7 @@ struct audio_s {
 					/* the case for CubieBoard where it was longer. */
 					/* This is filled in by ptt_init so we don't have to */
 					/* recalculate it each time we access it. */
+					/* Also GPIO chip name for GPIOD method. Looks like 'gpiochip4' */
 
 					/* This could probably be collapsed into ptt_device instead of being separate. */
 
@@ -312,6 +331,11 @@ struct audio_s {
 
 	        int ptt_invert;		/* Invert the output. */
 	        int ptt_invert2;	/* Invert the secondary output. */
+#if USE_GPIOD
+#if LIBGPIOD_VERSION_MAJOR >= 2
+	        gpio_num_t gpio_num;	/* Handle from libgpiod.  Valid only when ptt_method is PTT_METHOD_GPIOD. */
+#endif
+#endif
 
 #ifdef USE_HAMLIB
 
@@ -372,7 +396,7 @@ struct audio_s {
 
 	    int fulldup;		/* Full Duplex. */
 
-	} achan[MAX_CHANS];
+	} achan[MAX_RADIO_CHANS];
 
 #ifdef USE_HAMLIB
     int rigs;               /* Total number of configured rigs */
@@ -381,6 +405,9 @@ struct audio_s {
 
 };
 
+#if DEMOD_C
+	const static char *layer2_tx[3] = {"AX.25", "FX.25", "IL2P"};	// Must keep in sync with enum layer2_t above.
+#endif
 
 #if __WIN32__
 #define DEFAULT_ADEVICE	""		/* Windows: Empty string = default audio device. */
@@ -451,6 +478,16 @@ struct audio_s {
 #define MIN_BAUD		100
 //#define MAX_BAUD		10000
 #define MAX_BAUD		40000		// Anyone want to try 38.4 k baud?
+
+// When command line -B or config file MODEM has AIS or EAS,
+// we store a special reserved value at that point and select
+// the proper mode and actual speed later.
+// It should probably be outside the min-max range but we would
+// have more checking and testing to do for the range checks.
+
+#define BAUD_SENTINEL_AIS (MAX_BAUD-1)
+#define BAUD_SENTINEL_EAS (MAX_BAUD-2)
+
 
 /*
  * Typical transmit timings for VHF.

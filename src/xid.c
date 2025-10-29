@@ -67,6 +67,12 @@
 #define PI_Ack_Timer			9	
 #define PI_Retries			10	
 
+// Is this stanard or Dave's creation?
+#define PI_Compression_Algorithm_Mask	65
+#define PI_TX_Window_Bits		66
+#define PI_RX_Window_Bits		67
+
+
 // Forget about the bit order at the physical layer (e.g. HDLC).
 // It doesn't matter at all here.  We are dealing with bytes.
 // A different encoding could send the bits in the opposite order.
@@ -212,8 +218,9 @@ int xid_parse (unsigned char *info, int info_len, struct xid_param_s *result, ch
 	    case PI_Classes_of_Procedures:
 	      
 	      if ( ! (pval & PV_Classes_Procedures_Balanced_ABM)) {
-	        text_color_set (DW_COLOR_ERROR);
-	        dw_printf ("XID error: Expected Balanced ABM to be set.\n");	
+		//  https://groups.io/g/bpq32/topic/113348033#msg44169
+	        //text_color_set (DW_COLOR_ERROR);
+	        //dw_printf ("XID error: Expected Balanced ABM to be set.\n");	
 	      }
 
 	      if (pval & PV_Classes_Procedures_Half_Duplex && ! (pval & PV_Classes_Procedures_Full_Duplex)) {
@@ -225,8 +232,9 @@ int xid_parse (unsigned char *info, int info_len, struct xid_param_s *result, ch
 	        strlcat (desc, "Full-Duplex ", desc_size);
 	      }
 	      else {
-	        text_color_set (DW_COLOR_ERROR);
-	        dw_printf ("XID error: Expected one of Half or Full Duplex be set.\n");	
+		//  https://groups.io/g/bpq32/topic/113348033#msg44169
+	        //text_color_set (DW_COLOR_ERROR);
+	        //dw_printf ("XID error: Expected one of Half or Full Duplex be set.\n");	
 	        result->full_duplex = 0;
 	      }
 
@@ -275,8 +283,9 @@ int xid_parse (unsigned char *info, int info_len, struct xid_param_s *result, ch
 	      }
 
 	      if ( ! (pval & PV_HDLC_Optional_Functions_Extended_Address)) {
-	        text_color_set (DW_COLOR_ERROR);
-	        dw_printf ("XID error: Expected Extended Address to be set.\n");	
+		//  https://groups.io/g/bpq32/topic/113348033#msg44169
+	        //text_color_set (DW_COLOR_ERROR);
+	        //dw_printf ("XID error: Expected Extended Address to be set.\n");	
 	      }
 
 	      if ( ! (pval & PV_HDLC_Optional_Functions_TEST_cmd_resp)) {
@@ -343,6 +352,10 @@ int xid_parse (unsigned char *info, int info_len, struct xid_param_s *result, ch
 	      strlcat (desc, stemp, desc_size);
 
 	      break;
+
+		// PI_Compression_Algorithm_Mask
+		// PI_TX_Window_Bits
+		// PI_RX_Window_Bits
 
 	    default:		
 	      break;	// Ignore anything we don't recognize.

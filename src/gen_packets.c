@@ -242,7 +242,7 @@ int main(int argc, char **argv)
         modem.adev[0].samples_per_sec = DEFAULT_SAMPLES_PER_SEC;        /* -r option */
         modem.adev[0].bits_per_sample = DEFAULT_BITS_PER_SAMPLE;        /* -8 for 8 instead of 16 bits */
         
-	for (chan = 0; chan < MAX_CHANS; chan++) {
+	for (chan = 0; chan < MAX_RADIO_CHANS; chan++) {
 	  modem.achan[chan].modem_type = MODEM_AFSK;			/* change with -g */
 	  modem.achan[chan].mark_freq = DEFAULT_MARK_FREQ;              /* -m option */
           modem.achan[chan].space_freq = DEFAULT_SPACE_FREQ;            /* -s option */
@@ -321,7 +321,7 @@ int main(int argc, char **argv)
 						// FIXME: options should not be order dependent.
 
               if (strcasecmp(optarg, "EAS") == 0) {
-	        modem.achan[0].baud = 0xEA5EA5;	// See special case below.
+	        modem.achan[0].baud = BAUD_SENTINEL_EAS;	// See special case below.
 	      }
 	      else {
 	        modem.achan[0].baud = atoi(optarg);
@@ -338,7 +338,7 @@ int main(int argc, char **argv)
                   modem.achan[0].mark_freq = 1615;
                   modem.achan[0].space_freq = 1785;
 	      }
-	      else if (modem.achan[0].baud == 0xEA5EA5) {
+	      else if (modem.achan[0].baud == BAUD_SENTINEL_EAS) {
 		  modem.achan[0].baud = 521;			// Fine tuned later. 520.83333
 								// Proper fix is to make this float.
                   modem.achan[0].modem_type = MODEM_EAS;

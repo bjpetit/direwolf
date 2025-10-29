@@ -66,8 +66,10 @@
 #define AX25_UI_FRAME 3		/* Control field value. */
 
 #define AX25_PID_NO_LAYER_3 0xf0		/* protocol ID used for APRS */
+#define AX25_PID_NETROM 0xcf			/* protocol ID used for NET/ROM */
 #define AX25_PID_SEGMENTATION_FRAGMENT 0x08
 #define AX25_PID_ESCAPE_CHARACTER 0xff
+#define AX25_PID_ZLIB_COMPRESSED 0xf5		/* Dave's creation */
 
 
 #ifdef AX25_PAD_C	/* Keep this hidden - implementation could change. */
@@ -427,6 +429,7 @@ extern int ax25_is_null_frame (packet_t this_p);
 extern int ax25_get_control (packet_t this_p); 
 extern int ax25_get_c2 (packet_t this_p); 
 
+extern void ax25_set_pid (packet_t this_p, int pid);
 extern int ax25_get_pid (packet_t this_p);
 
 extern int ax25_get_frame_len (packet_t this_p);

@@ -379,7 +379,7 @@ static void debug_print (fromto_t fromto, int client, struct agwpe_s *pmsg, int 
 	      case 'C': strlcpy (datakind, "AX.25 Connection Received",			sizeof(datakind)); break;
 	      case 'D': strlcpy (datakind, "Connected AX.25 Data",			sizeof(datakind)); break;
 	      case 'd': strlcpy (datakind, "Disconnected",				sizeof(datakind)); break;
-	      case 'M': strlcpy (datakind, "Monitored Connected Information",		sizeof(datakind)); break;
+	      case 'I': strlcpy (datakind, "Monitored Connected Information",		sizeof(datakind)); break;
 	      case 'S': strlcpy (datakind, "Monitored Supervisory Information",		sizeof(datakind)); break;
 	      case 'U': strlcpy (datakind, "Monitored Unproto Information",		sizeof(datakind)); break;
 	      case 'T': strlcpy (datakind, "Monitoring Own Information",		sizeof(datakind)); break;
@@ -820,7 +820,7 @@ void server_send_rec_packet (int chan, packet_t pp, unsigned char *fbuf,  int fl
 
 	    /* Stick in extra byte for the "TNC" to use. */
 
-	    agwpe_msg.data[0] = 0;
+	    agwpe_msg.data[0] = chan << 4;		// Was 0.  Fixed in 1.8.
 	    memcpy (agwpe_msg.data + 1, fbuf, (size_t)flen);
 
 	    if (debug_client) {
@@ -866,6 +866,8 @@ void server_send_monitored (int chan, packet_t pp, int own_xmit)
  * MONITOR format - 	'I' for information frames.
  *			'U' for unnumbered information.
  *			'S' for supervisory and other unnumbered.
+ *
+ *			'T' for own transmitted frames.
  */
 	struct {
 	  struct agwpe_s hdr;
@@ -875,9 +877,7 @@ void server_send_monitored (int chan, packet_t pp, int own_xmit)
 	int err;
 
 	for (int client=0; client<MAX_NET_CLIENTS; client++) {
-
 	  if (enable_send_monitor_to_client[client] && client_sock[client] > 0) {
-
 	    memset (&agwpe_msg.hdr, 0, sizeof(agwpe_msg.hdr));
 
 	    agwpe_msg.hdr.portx = chan;	// datakind is added later.
@@ -910,6 +910,11 @@ void server_send_monitored (int chan, packet_t pp, int own_xmit)
 	    char desc[120];
 	    agwpe_msg.hdr.datakind = mon_desc (pp, desc, sizeof(desc));
 	    if (own_xmit) {
+	      // Should we include all own transmitted frames or only UNPROTO?
+	      // Discussion:  https://github.com/wb2osz/direwolf/issues/585
+	      if (agwpe_msg.hdr.datakind != 'U') {
+	        break;
+	      }
 	      agwpe_msg.hdr.datakind = 'T';
 	    }
 	    strlcat ((char*)(agwpe_msg.data), desc, sizeof(agwpe_msg.data));
@@ -976,6 +981,14 @@ void server_send_monitored (int chan, packet_t pp, int own_xmit)
 // Format addresses in AGWPR monitoring format such as:
 //	 1:Fm ZL4FOX-8 To Q7P2U2 Via WIDE3-3
 
+// There is some disagreement, in the user community, about whether to:
+// * follow the lead of UZ7HO SoundModem and mark all of the used addresses, or
+// * follow the TNC-2 Monitoring format and mark only the last used, i.e. the station heard.
+
+// I think my opinion (which could change) is that we should try to be consistent with TNC-2 format
+// rather than continuing to propagate historical inconsistencies.
+
+
 static void mon_addrs (int chan, packet_t pp, char *result, int result_size)
 {
 	char src[AX25_MAX_ADDR_LEN];
@@ -986,16 +999,25 @@ static void mon_addrs (int chan, packet_t pp, char *result, int result_size)
 	int num_digi = ax25_get_num_repeaters(pp);
 
 	if (num_digi > 0) {
+	  char via[AX25_MAX_REPEATERS*(AX25_MAX_ADDR_LEN+1)];	// complete via path
+	  strlcpy (via, "", sizeof(via));
 
-	  char via[AX25_MAX_REPEATERS*(AX25_MAX_ADDR_LEN+1)];
-	  char stemp[AX25_MAX_ADDR_LEN+1];
-	  int j;
+	  for (int j = 0; j < num_digi; j++) {
+	    char digiaddr[AX25_MAX_ADDR_LEN];
 
-	  ax25_get_addr_with_ssid (pp, AX25_REPEATER_1, via);
-	  for (j = 1; j < num_digi; j++) {
-	    ax25_get_addr_with_ssid (pp, AX25_REPEATER_1 + j, stemp);
-	    strlcat (via, ",", sizeof(via));
-	    strlcat (via, stemp, sizeof(via));
+	    if (j != 0) {
+	      strlcat (via, ",", sizeof(via));	// comma if not first address
+	    }
+	    ax25_get_addr_with_ssid (pp, AX25_REPEATER_1 + j, digiaddr);
+	    strlcat (via, digiaddr, sizeof(via));
+#if 0  // Mark each used with * as seen in UZ7HO SoundModem.
+	    if (ax25_get_h(pp, AX25_REPEATER_1 + j)) {
+#else  // Mark only last used (i.e. the heard station) with * as in TNC-2 Monitoring format.
+	    if (AX25_REPEATER_1 + j == ax25_get_heard(pp)) {
+#endif
+	      strlcat (via, "*", sizeof(via));
+	    }
+
 	  }
 	  snprintf (result, result_size, " %d:Fm %s To %s Via %s ",
 		chan+1, src, dst, via);
@@ -1413,7 +1435,7 @@ static THREAD_F cmd_listen_thread (void *arg)
 /*
  * Take some precautions to guard against bad data which could cause problems later.
  */
-	if (cmd.hdr.portx < 0 || cmd.hdr.portx >= MAX_CHANS) {
+	if (cmd.hdr.portx < 0 || cmd.hdr.portx >= MAX_TOTAL_CHANS) {
 	  text_color_set(DW_COLOR_ERROR);
 	  dw_printf ("\nInvalid port number, %d, in command '%c', from AGW client application %d.\n",
 			cmd.hdr.portx, cmd.hdr.datakind, client);
@@ -1544,7 +1566,7 @@ static THREAD_F cmd_listen_thread (void *arg)
 		// No other place cares about total number.
 
 		count = 0;
-		for (j=0; j<MAX_CHANS; j++) {
+		for (j=0; j<MAX_TOTAL_CHANS; j++) {
 	          if (save_audio_config_p->chan_medium[j] == MEDIUM_RADIO ||
 	              save_audio_config_p->chan_medium[j] == MEDIUM_IGATE ||
 	              save_audio_config_p->chan_medium[j] == MEDIUM_NETTNC) {
@@ -1553,12 +1575,13 @@ static THREAD_F cmd_listen_thread (void *arg)
 		}
 		snprintf (reply.info, sizeof(reply.info), "%d;", count);
 
-		for (j=0; j<MAX_CHANS; j++) {
+		for (j=0; j<MAX_TOTAL_CHANS; j++) {
 
 	          switch (save_audio_config_p->chan_medium[j]) {
 
 	            case MEDIUM_RADIO:
 	              {
+	                // Misleading if using stdin or udp.
 		        char stemp[100];
 		        int a = ACHAN2ADEV(j);
 		        // If I was really ambitious, some description could be provided.
@@ -1593,12 +1616,7 @@ static THREAD_F cmd_listen_thread (void *arg)
 	              break;
 
 	            default:
-	              {
-	                // could elaborate with hostname, etc.
-		        char stemp[100];
-		        snprintf (stemp, sizeof(stemp), "Port%d INVALID CHANNEL;", j+1);
-		        strlcat (reply.info, stemp, sizeof(reply.info));
-	              }
+	              ; // Only list valid channels.
 	              break;
 
 		  }  // switch
@@ -1721,6 +1739,7 @@ static THREAD_F cmd_listen_thread (void *arg)
 	      
 		packet_t pp;
 
+		int pid = cmd.hdr.pid;
 	      	strlcpy (stemp, cmd.hdr.call_from, sizeof(stemp));
 	      	strlcat (stemp, ">", sizeof(stemp));
 	      	strlcat (stemp, cmd.hdr.call_to, sizeof(stemp));
@@ -1734,33 +1753,45 @@ static THREAD_F cmd_listen_thread (void *arg)
 		  strlcat (stemp, p, sizeof(stemp));
 		  p += 10;
 	        }
+	        // At this point, p now points to info part after digipeaters.
+
+	        // Issue 527: NET/ROM routing broadcasts are binary info so we can't treat as string.
+	        // Originally, I just appended the information part.
+		// That was fine until NET/ROM, with binary data, came along.
+		// Now we set the information field after creating the packet object.
+
 		strlcat (stemp, ":", sizeof(stemp));
-		strlcat (stemp, p, sizeof(stemp));
+		strlcat (stemp, " ", sizeof(stemp));
 
 	        //text_color_set(DW_COLOR_DEBUG);
 		//dw_printf ("Transmit '%s'\n", stemp);
 
 		pp = ax25_from_text (stemp, 1);
 
-
 		if (pp == NULL) {
 	          text_color_set(DW_COLOR_ERROR);
 		  dw_printf ("Failed to create frame from AGW 'V' message.\n");
+	          break;
 		}
-		else {
 
-		  /* This goes into the low priority queue because it is an original. */
+		// Issue 550: Info part was one byte too long resulting in an extra nul character.
+		// Original calculation was data_len-ndigi*10 but we need to subtract one
+		// for first byte which is number of digipeaters.
+	        ax25_set_info (pp, (unsigned char*)p, data_len - ndigi * 10 - 1);
 
-		  /* Note that the protocol has no way to set the "has been used" */
-		  /* bits in the digipeater fields. */
+	        // Issue 527: NET/ROM routing broadcasts use PID 0xCF which was not preserved here.
+	        ax25_set_pid (pp, pid);
 
-		  /* This explains why the digipeating option is grayed out in */
-		  /* xastir when using the AGW interface.  */
-		  /* The current version uses only the 'V' message, not 'K' for transmitting. */
+		/* This goes into the low priority queue because it is an original. */
 
-		  tq_append (cmd.hdr.portx, TQ_PRIO_1_LO, pp);
+		/* Note that the protocol has no way to set the "has been used" */
+		/* bits in the digipeater fields. */
 
-		}
+		/* This explains why the digipeating option is grayed out in */
+		/* xastir when using the AGW interface.  */
+		/* The current version uses only the 'V' message, not 'K' for transmitting. */
+
+		tq_append (cmd.hdr.portx, TQ_PRIO_1_LO, pp);
 	      }
 	      
 	      break;
@@ -1784,10 +1815,16 @@ static THREAD_F cmd_listen_thread (void *arg)
 		//		00=Port 1
 		//		16=Port 2
 		//
-		// I don't know what that means; we already a port number in the header.
+		// The seems to be redundant; we already a port number in the header.
 		// Anyhow, the original code here added one to cmd.data to get the 
 		// first byte of the frame.  Unfortunately, it did not subtract one from
 		// cmd.hdr.data_len so we ended up sending an extra byte.
+
+	        // TODO: Right now I just use the port (channel) number in the header.
+		// What if the second one is inconsistent?  
+		// - Continue to ignore port number at beginning of data?
+		// - Use second one instead?
+		// - Error message if a mismatch?
 
 		memset (&alevel, 0xff, sizeof(alevel));
 		pp = ax25_from_frame ((unsigned char *)cmd.data+1, data_len - 1, alevel);
@@ -1839,7 +1876,7 @@ static THREAD_F cmd_listen_thread (void *arg)
 
 	        // Connected mode can only be used with internal modems.
 
-		if (chan >= 0 && chan < MAX_CHANS && save_audio_config_p->chan_medium[chan] == MEDIUM_RADIO) {
+		if (chan >= 0 && chan < MAX_RADIO_CHANS && save_audio_config_p->chan_medium[chan] == MEDIUM_RADIO) {
 		  ok = 1;
 	          dlq_register_callsign (cmd.hdr.call_from, chan, client);
 	        }
@@ -1868,7 +1905,7 @@ static THREAD_F cmd_listen_thread (void *arg)
 
 	        // Connected mode can only be used with internal modems.
 
-		if (chan >= 0 && chan < MAX_CHANS && save_audio_config_p->chan_medium[chan] == MEDIUM_RADIO) {
+		if (chan >= 0 && chan < MAX_RADIO_CHANS && save_audio_config_p->chan_medium[chan] == MEDIUM_RADIO) {
 	          dlq_unregister_callsign (cmd.hdr.call_from, chan, client);
 	        }
 		else {
@@ -1888,7 +1925,7 @@ static THREAD_F cmd_listen_thread (void *arg)
 	          unsigned char num_digi;	/* Expect to be in range 1 to 7.  Why not up to 8? */
 		  char dcall[7][10];
 	        } 
-#if 1
+
 		// October 2017.  gcc ??? complained:
 		//     warning: dereferencing pointer 'v' does break strict-aliasing rules
 		// Try adding this attribute to get rid of the warning.
@@ -1896,7 +1933,6 @@ static THREAD_F cmd_listen_thread (void *arg)
 	        // Let me know.  Maybe we could put in a compiler version check here.
 
 	           __attribute__((__may_alias__))
-#endif
 	                              *v = (struct via_info *)cmd.data;
 
 	        char callsigns[AX25_MAX_ADDRS][AX25_MAX_ADDR_LEN];
@@ -2005,19 +2041,7 @@ static THREAD_F cmd_listen_thread (void *arg)
 	      {
 	      
 		int pid = cmd.hdr.pid;
-		(void)(pid);
-			/* The AGW protocol spec says, */
-			/* "AX.25 PID 0x00 or 0xF0 for AX.25 0xCF NETROM and others" */
-
-			/* BUG: In theory, the AX.25 PID octet should be set from this. */
-			/* All examples seen (above) have 0. */
-			/* The AX.25 protocol spec doesn't list 0 as a valid value. */
-			/* We always send 0xf0, meaning no layer 3. */
-			/* Maybe we should have an ax25_set_pid function for cases when */
-			/* it is neither 0 nor 0xf0. */
-
 	      	char stemp[AX25_MAX_PACKET_LEN];
-		packet_t pp;
 
 	      	strlcpy (stemp, cmd.hdr.call_from, sizeof(stemp));
 	      	strlcat (stemp, ">", sizeof(stemp));
@@ -2025,21 +2049,29 @@ static THREAD_F cmd_listen_thread (void *arg)
 
 		cmd.data[data_len] = '\0';
 
+	        // Issue 527: NET/ROM routing broadcasts are binary info so we can't treat as string.
+	        // Originally, I just appended the information part as a text string.
+		// That was fine until NET/ROM, with binary data, came along.
+		// Now we set the information field after creating the packet object.
+
 		strlcat (stemp, ":", sizeof(stemp));
-		strlcat (stemp, cmd.data, sizeof(stemp));
+		strlcat (stemp, " ", sizeof(stemp));
 
 	        //text_color_set(DW_COLOR_DEBUG);
 		//dw_printf ("Transmit '%s'\n", stemp);
 
-		pp = ax25_from_text (stemp, 1);
+		packet_t pp = ax25_from_text (stemp, 1);
 
 		if (pp == NULL) {
 	          text_color_set(DW_COLOR_ERROR);
 		  dw_printf ("Failed to create frame from AGW 'M' message.\n");
 		}
-		else {
-		  tq_append (cmd.hdr.portx, TQ_PRIO_1_LO, pp);
-		}
+
+	        ax25_set_info (pp, (unsigned char*)cmd.data, data_len);
+	        // Issue 527: NET/ROM routing broadcasts use PID 0xCF which was not preserved here.
+	        ax25_set_pid (pp, pid);
+
+		tq_append (cmd.hdr.portx, TQ_PRIO_1_LO, pp);
 	      }
 	      break;
 
@@ -2060,7 +2092,7 @@ static THREAD_F cmd_listen_thread (void *arg)
 	        reply.hdr.data_len_NETLE = host2netle(4);
 
 	        int n = 0;
-	        if (cmd.hdr.portx >= 0 && cmd.hdr.portx < MAX_CHANS) {
+	        if (cmd.hdr.portx >= 0 && cmd.hdr.portx < MAX_RADIO_CHANS) {
 	          // Count both normal and expedited in transmit queue for given channel.
 		  n = tq_count (cmd.hdr.portx, -1, "", "", 0);
 		}
