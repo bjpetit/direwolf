@@ -301,12 +301,13 @@ int main (int argc, char *argv[])
 
 	// Might want to print OS version here.   For Windows, see:
 	// https://msdn.microsoft.com/en-us/library/ms724451(v=VS.85).aspx
+	// https://www.dennisbabkin.com/blog/?t=how-to-tell-the-real-version-of-windows-your-app-is-running-on
 
 	text_color_init(t_opt);
 	text_color_set(DW_COLOR_INFO);
-	dw_printf ("Dire Wolf version %d.%d (%s) BETA TEST 1\n", MAJOR_VERSION, MINOR_VERSION, __DATE__);
+	//dw_printf ("Dire Wolf version %d.%d (%s) BETA TEST 1\n", MAJOR_VERSION, MINOR_VERSION, __DATE__);
 	//dw_printf ("Dire Wolf DEVELOPMENT version %d.%d %s (%s)\n", MAJOR_VERSION, MINOR_VERSION, "E", __DATE__);
-	//dw_printf ("Dire Wolf version %d.%d\n", MAJOR_VERSION, MINOR_VERSION);
+	dw_printf ("Dire Wolf Release %d.%d, October 2025\n", MAJOR_VERSION, MINOR_VERSION);
 
 
 #if defined(ENABLE_GPSD) || defined(USE_HAMLIB) || defined(USE_CM108) || USE_AVAHI_CLIENT || USE_MACOS_DNSSD || USE_GPIOD
