@@ -1569,7 +1569,8 @@ static THREAD_F cmd_listen_thread (void *arg)
 		for (j=0; j<MAX_TOTAL_CHANS; j++) {
 	          if (save_audio_config_p->chan_medium[j] == MEDIUM_RADIO ||
 	              save_audio_config_p->chan_medium[j] == MEDIUM_IGATE ||
-	              save_audio_config_p->chan_medium[j] == MEDIUM_NETTNC) {
+	              save_audio_config_p->chan_medium[j] == MEDIUM_NETTNC ||
+	              save_audio_config_p->chan_medium[j] == MEDIUM_SERTNC) {
 		    count++;
 		  }
 		}
@@ -1611,6 +1612,15 @@ static THREAD_F cmd_listen_thread (void *arg)
 	                // could elaborate with hostname, etc.
 		        char stemp[100];
 		        snprintf (stemp, sizeof(stemp), "Port%d Network TNC;", j+1);
+		        strlcat (reply.info, stemp, sizeof(reply.info));
+	              }
+	              break;
+
+	            case MEDIUM_SERTNC:
+	              {
+	                // could elaborate with device, etc.
+		        char stemp[100];
+		        snprintf (stemp, sizeof(stemp), "Port%d Serial TNC;", j+1);
 		        strlcat (reply.info, stemp, sizeof(reply.info));
 	              }
 	              break;
