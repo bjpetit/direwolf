@@ -5347,7 +5347,7 @@ static void test_frame (ax25_dlsm_t *S, cmdres_t cr, int pf, unsigned char *info
 
 void dl_timer_expiry (void)
 {
-	ax25_dlsm_t *p;
+	ax25_dlsm_t *p, *p_next;
 	double now = dtime_now();
 
 // Examine all of the data link state machines.
@@ -5356,28 +5356,41 @@ void dl_timer_expiry (void)
 //	- is not paused.
 //	- expiration time has arrived or passed.
 
-	for (p = list_head; p != NULL; p = p->next) {
+// It is possible that one of the expiry functions might modify the list as
+// iteration proceeds, so the following loops need to iterate in a way that
+// allows for this.
+
+	p = list_head;
+	while (p) {
+	  p_next = p->next;
 	  if (p->t1_exp != 0 && p->t1_paused_at == 0 && p->t1_exp <= now) {
 	    p->t1_exp = 0;
 	    p->t1_paused_at = 0;
 	    p->t1_had_expired = 1;
 	    t1_expiry (p);
 	  }
+	  p = p_next;
 	}
 
-	for (p = list_head; p != NULL; p = p->next) {
+	p = list_head;
+	while (p) {
+	  p_next = p->next;
 	  if (p->t3_exp != 0 && p->t3_exp <= now) {
 	    p->t3_exp = 0;
 	    t3_expiry (p);
 	  }
+	  p = p_next;
 	}
 
-	for (p = list_head; p != NULL; p = p->next) {
+	p = list_head;
+	while (p) {
+	  p_next = p->next;
 	  if (p->tm201_exp != 0 && p->tm201_paused_at == 0 && p->tm201_exp <= now) {
 	    p->tm201_exp = 0;
 	    p->tm201_paused_at = 0;
 	    tm201_expiry (p);
 	  }
+	  p = p_next;
 	}
 
 } /* end dl_timer_expiry */
