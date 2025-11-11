@@ -1,12 +1,18 @@
 # Revision History
 
-## Version 1.8  --  October 2025
+## Version 1.8.1 -- November 2025
+
+### Bug Fixed:
+
+- Crash (sigsegv) after AX.25 connection attempt timeout with AGW network interface.
+
+## Version 1.8 -- October 2025
 
 ### New Documentation:
 
 - All APRS users should read [Understanding APRS Packets](https://github.com/wb2osz/aprsspec/raw/main/Understanding-APRS-Packets.pdf).  Be sure to read the section on common mistakes or you might be used as an example of what not to do.
 
-## New Features:
+### New Features:
 
 - Added support for libgpiod version 2.  This is needed for GPIO PTT on [Raspberry Pi OS 13 trixie](https://www.raspberrypi.com/news/trixie-the-new-version-of-raspberry-pi-os/).  You will need to install libgpiod-dev before building.
 

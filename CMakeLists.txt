@@ -5,7 +5,7 @@ project(direwolf)
 # configure version
 set(direwolf_VERSION_MAJOR "1")
 set(direwolf_VERSION_MINOR "8")
-set(direwolf_VERSION_PATCH "0")
+set(direwolf_VERSION_PATCH "1")
 set(direwolf_VERSION_SUFFIX "Development")
 
 # options
@@ -66,6 +66,7 @@ message(STATUS "${APPLICATION_NAME} Version: ${direwolf_VERSION}")
 add_definitions("-DIREWOLF_VERSION=\"${direwolf_VERSION}\"")
 add_definitions("-DMAJOR_VERSION=${direwolf_VERSION_MAJOR}")
 add_definitions("-DMINOR_VERSION=${direwolf_VERSION_MINOR}")
+add_definitions("-DPATCH_VERSION=${direwolf_VERSION_PATCH}")
 if(direwolf_VERSION_COMMIT)
   add_definitions("-DEXTRA_VERSION=${direwolf_VERSION_COMMIT}")
 endif()
