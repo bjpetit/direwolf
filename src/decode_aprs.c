@@ -496,6 +496,18 @@ void decode_aprs (decode_aprs_t *A, packet_t pp, int quiet, char *third_party_sr
 	
 	      //break;
 
+	    case 'D':
+
+	      // This is not valid APRS.  Should we do something with it?
+	      // From https://github.com/wb2osz/direwolf/issues/623
+	      // F5KTJ-3>DX,F1ZCK-3*:DX de   F5KTJ-3>144800.0  F5ZFL-4      086 dg frm   F5KTJ-3            98km<0x0d>
+	      // Reference: http://aprsisce.wikidot.com/kenwood-dx-cluster
+
+	      if (strncmp((char*)pinfo, "DX", 2) == 0) {
+	        strlcpy (A->g_data_type_desc, "DX Cluster", sizeof(A->g_data_type_desc));
+	      }
+	      break;
+
 	    default:
 
 	      break;
