@@ -266,6 +266,8 @@ void ptt_set_debug(int debug)
 	ptt_debug_level = debug;
 }
 
+static void ptt_term (void);
+
 
 /*-------------------------------------------------------------------
  *
@@ -1299,6 +1301,10 @@ void ptt_init (struct audio_s *audio_config_p)
 	  }
 	}
 
+// Turn off PTT, close devices, and otherwise clean up on exit.
+
+	atexit (ptt_term);
+
 } /* end ptt_init */
 
 
@@ -1641,14 +1647,17 @@ int get_input (int it, int chan)
  * Name:        ptt_term
  *
  * Purpose:    	Make sure PTT and others are turned off when we exit.
+ *		Clean up such as closing devices.
  *
  * Inputs:	none
  *
  * Description:	
  *
+ * Assumption:	ptt_init has completed.  May crash otherwise.
+ *
  *--------------------------------------------------------------------*/
 
-void ptt_term (void)
+static void ptt_term (void)
 {
 	int n;
 

@@ -136,11 +136,15 @@
 
 //static int idx_decoded = 0;
 
+// Handle Control-C.
 #if __WIN32__
-static BOOL cleanup_win (int);
+static BOOL signal_handler_win (int);
 #else
-static void cleanup_linux (int);
+static void signal_handler_linux (int);
 #endif
+
+// Clean up after application exit.
+static void exit_handler (void);
 
 static void usage (void);
 
@@ -308,7 +312,7 @@ int main (int argc, char *argv[])
 	text_color_set(DW_COLOR_INFO);
 	//dw_printf ("Dire Wolf version %d.%d (%s) BETA TEST 1\n", MAJOR_VERSION, MINOR_VERSION, __DATE__);
 	dw_printf ("Dire Wolf DEVELOPMENT version %d.%d %s (%s)\n", MAJOR_VERSION, MINOR_VERSION, "A", __DATE__);
-	//dw_printf ("Dire Wolf Release %d.%d, October 2025\n", MAJOR_VERSION, MINOR_VERSION);
+	//dw_printf ("Dire Wolf Release %d.%d,%d, October 2025\n", MAJOR_VERSION, MINOR_VERSION, PATCH_VERSION);
 
 
 #if defined(ENABLE_GPSD) || defined(USE_HAMLIB) || defined(USE_CM108) || USE_AVAHI_CLIENT || USE_MACOS_DNSSD || USE_GPIOD
@@ -333,13 +337,21 @@ int main (int argc, char *argv[])
 	dw_printf ("\n");
 #endif
 
+// Version 1.9 exit handling.
+// Previously we just trapped control-C and printed a QRT message.
+// When direwolf is run by double clicking an icon, rather than from
+// the command line, the terminal window disappears before any error
+// message can be read.
+// Add an atexit handler so messages can be seen before window disappears.
 
 #if __WIN32__
 	//setlinebuf (stdout);   setvbuf???
-	SetConsoleCtrlHandler ((PHANDLER_ROUTINE)cleanup_win, TRUE);
+	SetConsoleCtrlHandler ((PHANDLER_ROUTINE)signal_handler_win, TRUE);
+	atexit (exit_handler);
 #else
 	setlinebuf (stdout);
-	signal (SIGINT, cleanup_linux);
+	signal (SIGINT, signal_handler_linux);
+	atexit (exit_handler);
 #endif
 
 
@@ -1674,41 +1686,45 @@ void app_process_rec_packet (int chan, int subchan, int slice, packet_t pp, alev
 
 
 
-/* Process control C and window close events. */
+/* Process control C and window close signals. */
 
 #if __WIN32__
-
-static BOOL cleanup_win (int ctrltype)
+static BOOL signal_handler_win (int ctrltype)
 {
 	if (ctrltype == CTRL_C_EVENT || ctrltype == CTRL_CLOSE_EVENT) {
-	  text_color_set(DW_COLOR_INFO);
-	  dw_printf ("\nQRT\n");
-	  log_term ();
-	  ptt_term ();
-	  waypoint_term ();
-	  dwgps_term ();
-	  SLEEP_SEC(1);
+          text_color_set(DW_COLOR_INFO);
+	  dw_printf ("\n *** Interrupted by user. **\n");
 	  ExitProcess (0);
 	}
 	return (TRUE);
 }
-
-
 #else
-
-static void cleanup_linux (int x)
+static void signal_handler_linux (int x)
 {
-	text_color_set(DW_COLOR_INFO);
-	dw_printf ("\nQRT\n");
-	log_term ();
-	ptt_term ();
-	dwgps_term ();
-	SLEEP_SEC(1);
+        text_color_set(DW_COLOR_INFO);
+	dw_printf ("\n *** Interrupted by user. **\n");
 	exit(0);
 }
-
 #endif
 
+// Exit handler.
+
+static void exit_handler (void)
+{
+	text_color_set(DW_COLOR_INFO);
+	dw_printf ("\nQRT in  ");
+
+	// If started from clicking on an icon, rather than the command line,
+	// window would disappear before any error message can be read.
+	// If people complain, we can add an option to skip delay.
+
+	for (int n=5; n>0; n--) {
+	  dw_printf ("%d...  ", n);
+	  fflush (stdout);
+	  SLEEP_SEC(1);
+	}
+	dw_printf ("\n");
+}
 
 
 static void usage (void)

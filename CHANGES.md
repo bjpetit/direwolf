@@ -1,5 +1,18 @@
 # Revision History
 
+## Development Version 1.9
+
+### New Features:
+
+- Add delay before exit so any error messages can be read before window disappears.
+
+
+## Version 1.8.1 -- November 2025
+
+### Bug Fixed:
+
+- Crash (sigsegv) after AX.25 connection attempt timeout with AGW network interface.
+
 ## Version 1.8  --  October 2025
 
 ### New Documentation:
