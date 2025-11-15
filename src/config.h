@@ -55,6 +55,10 @@ struct misc_config_s {
 	int kiss_port[MAX_KISS_TCP_PORTS];	/* TCP Port number for the "TCP KISS" protocol. */
 	int kiss_chan[MAX_KISS_TCP_PORTS];	/* Radio Channel number for this port or -1 for all.  */
 
+	int tcp_wmem;		// Issue 620 - It is theorized that a TCP KISS client is not reading very rapid
+				// data quickly enough and the received packet queue gets very large.
+				// As an experiment, let's see if making the TCP send buffer larger helps.
+
 	int kiss_copy;		/* Data from network KISS client is copied to all others. */
 	int enable_kiss_pt;	/* Enable pseudo terminal for KISS. */
 				/* Want this to be off by default because it hangs */

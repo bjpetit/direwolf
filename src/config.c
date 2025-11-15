@@ -5090,6 +5090,30 @@ void config_init (char *fname, struct audio_s *p_audio_config,
 	    }
 	  }
 
+
+/*
+ * TCP_WMEM n		- Experiment for Issue 620.  Set KISS TCP write buffer size.
+ */
+
+	  else if (strcasecmp(t, "TCP_WMEM") == 0) {
+
+	    t = split(NULL,0);
+	    if (t == NULL) {
+	      text_color_set(DW_COLOR_ERROR);
+	      dw_printf ("Line %d: Missing size number for TCP_WMEM command.\n", line);
+	      continue;
+	    }
+	    int n = atoi(t);
+            if (n >= 4 * 1024 && n <= 4 * 1024 * 1024) {
+	      p_misc_config->tcp_wmem = n;
+	    }
+	    else {
+	      text_color_set(DW_COLOR_ERROR);
+              dw_printf ("Line %d: Be serious.  Using default.\n", line);
+	    }
+	  }
+
+
 /*
  * NULLMODEM name [ speed ]	- Device name for serial port or our end of the virtual "null modem"
  * SERIALKISS name  [ speed ]

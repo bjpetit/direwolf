@@ -235,6 +235,7 @@ int main (int argc, char *argv[])
 	int d_x_opt = 1;	/* "-d x" option for FX.25.  Default minimal. Repeat for more detail.  -qx to silence. */
 	int d_2_opt = 0;	/* "-d 2" option for IL2P.  Default minimal. Repeat for more detail. */
 	int d_c_opt = 0;	/* "-d c" option for connected mode data link state machine. */
+	int d_q_opt = 0;	/* "-d q" option for data link state machine queue. */
 
 	int aprstt_debug = 0;	/* "-d d" option for APRStt (think Dtmf) debug. */
 
@@ -311,7 +312,8 @@ int main (int argc, char *argv[])
 	text_color_init(t_opt);
 	text_color_set(DW_COLOR_INFO);
 	//dw_printf ("Dire Wolf version %d.%d (%s) BETA TEST 1\n", MAJOR_VERSION, MINOR_VERSION, __DATE__);
-	dw_printf ("Dire Wolf DEVELOPMENT version %d.%d %s (%s)\n", MAJOR_VERSION, MINOR_VERSION, "A", __DATE__);
+	dw_printf ("Dire Wolf DEVELOPMENT version %d.%d %s (%s)\n", MAJOR_VERSION, MINOR_VERSION, "B", __DATE__);
+// B = new -dq & tcp_wmem
 	//dw_printf ("Dire Wolf Release %d.%d,%d, October 2025\n", MAJOR_VERSION, MINOR_VERSION, PATCH_VERSION);
 
 
@@ -667,6 +669,7 @@ int main (int argc, char *argv[])
 	      case 'x':  d_x_opt++; break;			// FX.25
 	      case '2':  d_2_opt++; break;			// IL2P
 	      case 'd':	 aprstt_debug++; break;			// APRStt (mnemonic Dtmf)
+	      case 'q':  d_q_opt++;				// Data Link State Machine Queue
 	      default: break;
 	     }
 	    }
@@ -1013,7 +1016,9 @@ int main (int argc, char *argv[])
  * Files not supported at this time.
  * Can always "cat" the file and pipe it into stdin.
  */
-	deviceid_init();
+	dlq_init (d_q_opt);		// Before anything that might use it.
+
+	deviceid_init();		// Read tocalls.yaml
 
 	err = audio_open (&audio_config);
 	if (err < 0) {
@@ -1778,6 +1783,7 @@ static void usage (void)
 	dw_printf ("       x             x = FX.25 increase verbose level.\n");
 	dw_printf ("       2             2 = IL2P.\n");
 	dw_printf ("       d             d = APRStt (DTMF to APRS object translation).\n");
+	dw_printf ("       q             q = data link state machine Queue.\n");
 	dw_printf ("    -q             Quiet (suppress output) options:\n");
 	dw_printf ("       h             h = Heard line with the audio level.\n");
 	dw_printf ("       d             d = Description of APRS packets.\n");
