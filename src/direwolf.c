@@ -1788,8 +1788,13 @@ static void usage (void)
 	dw_printf ("       h             h = Heard line with the audio level.\n");
 	dw_printf ("       d             d = Description of APRS packets.\n");
 	dw_printf ("       x             x = Silence FX.25 information.\n");
-	dw_printf ("    -t n           Text colors.  0=disabled. 1=default.  2,3,4,... alternatives.\n");
+#if __WIN32__
+	dw_printf ("    -t n           Text colors.  0=disabled. 1=default. 2=black background\n");
+#else
+	dw_printf ("    -t n           Text colors.  0=disabled. 1=default.  2,3,4 alternatives.\n");
+	dw_printf ("                         5=keep current background color.  6=black background.\n");
 	dw_printf ("                     Use 9 to test compatibility with your terminal.\n");
+#endif
 	dw_printf ("    -a n           Audio statistics interval in seconds.  0 to disable.\n");
 #if __WIN32__
 #else

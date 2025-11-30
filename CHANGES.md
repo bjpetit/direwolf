@@ -6,6 +6,9 @@
 
 - Add delay before exit so any error messages can be read before window disappears.
 
+- New SCHANNEL feature to map a channel number to an external serial port TNC.    See [APRS-LoRa-VHF-APRS-Bridge.pdf](https://raw.githubusercontent.com/wb2osz/direwolf-doc/main/APRS-LoRa-VHF-APRS-Bridge.pdf) for explanation and example.
+
+- New text background modes.  Windows: 2 for black background.  Others: 5 to leave current background color alone, 6 for black background.
 
 ## Version 1.8.1 -- November 2025
 
