@@ -265,6 +265,19 @@ g_enable_color = enable_color;
 
 /* Seems that ANSI.SYS is no longer available. */
 
+// Issue 627 pointed out:
+
+//      textcolor.c makes the complaint that windows no longer offers ansi.sys.
+//      This is true, but the functionality remains.
+//      By default processing of VT sequences is off but they can be enabled by
+//	setting the ENABLE_VIIRTUAL_TERMINAL_PROCESSING flag using SetConsoleMode.
+//      The result should be requiring only a little on-startup initialisation
+//	code for windows, with further output code being common between windows
+//	and linux.
+
+//      The microsoft documentation is here:
+//	https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences
+
 
 void text_color_set ( enum dw_color_e c )
 {
