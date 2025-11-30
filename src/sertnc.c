@@ -226,12 +226,13 @@ static void * sertnc_listen_thread (void *arg)
 
 	int ch;		// normally 0-255 but -1 for error.
 
+	int reattach_delay = 30;	// Could happen if USB serial device is unplugged.
+
 	while (1) {
 /*
  * Re-attach to TNC if not currently attached.
  */
 	  if (s_tnc_fd[chan] == MYFDERROR) {
-
 	    text_color_set(DW_COLOR_ERROR);
 	    // I'm using the term "attach" here, in an attempt to
 	    // avoid confusion with the AX.25 connect.
@@ -242,16 +243,23 @@ static void * sertnc_listen_thread (void *arg)
 	    if (s_tnc_fd[chan] != MYFDERROR) {
 	      dw_printf ("Successfully reattached to serial TNC.\n");
 	    }
+	    else {
+	      dw_printf ("Failed to reattach.  Try again in %d seconds.\n", reattach_delay);
+	      serial_port_close (s_tnc_fd[chan]);
+	      s_tnc_fd[chan] = MYFDERROR;
+	      SLEEP_SEC (reattach_delay);
+	      continue;
+	    }
 	  }
 	  else {
 	    ch = serial_port_get1 (s_tnc_fd[chan]);
 
 	    if (ch == -1) {
 	      text_color_set(DW_COLOR_ERROR);
-	      dw_printf ("Lost communication with serial TNC. Will try to reattach.\n");
+	      dw_printf ("Lost communication with serial TNC. Will try to reattach in %d seconds.\n", reattach_delay);
 	      serial_port_close (s_tnc_fd[chan]);
 	      s_tnc_fd[chan] = MYFDERROR;
-	      SLEEP_SEC(5);
+	      SLEEP_SEC (reattach_delay);
 	      continue;
 	    }
 
