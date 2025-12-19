@@ -2,7 +2,7 @@
 //
 //    This file is part of Dire Wolf, an amateur radio packet TNC.
 //
-//    Copyright (C) 2011, 2012, 2013, 2014, 2019  John Langner, WB2OSZ
+//    Copyright (C) 2011, 2012, 2013, 2014, 2019, 2025  John Langner, WB2OSZ
 //
 //    This program is free software: you can redistribute it and/or modify
 //    it under the terms of the GNU General Public License as published by
@@ -186,16 +186,20 @@ static const char clear_eos[]	= "\e[0J";
  *	9 (more accurately any invalid value) = try all of them and exit.
  */
 
+// TODO:  Should we have an exit handler to restore initial condition?
+
 static int g_enable_color = 1;
+static FILE *o_fp = NULL;
+static FILE *O_fp = NULL;
+static int current_color = 0;
 
 
 void text_color_init (int enable_color)
 {
 
+	g_enable_color = enable_color;
 
 #if __WIN32__
-
-g_enable_color = enable_color;
 
 	if (g_enable_color != 0) {
 
@@ -226,7 +230,7 @@ g_enable_color = enable_color;
 
 // Run a test if outside of acceptable range.
 
-	if (enable_color < 0 || enable_color > MAX_T) {
+	if (g_enable_color < 0 || g_enable_color > MAX_T) {
 	  int t;
 	  for (t = 0; t <= MAX_T; t++) {
 	    text_color_init (t);
@@ -245,8 +249,6 @@ g_enable_color = enable_color;
 	   exit (EXIT_SUCCESS);
 	}
 
-	g_enable_color = enable_color;
-
 	if (g_enable_color != 0) {
 	  int t = g_enable_color;
 
@@ -258,7 +260,36 @@ g_enable_color = enable_color;
 	  printf ("%s", t_black[t]);
 	}
 #endif
-}
+
+} //end text_color_init
+
+
+// Creat screen output capture files.
+// "-o" is for only raw received packets.
+// "-O" is for everything.
+
+void dw_printf_capture_init (char *o_opt, char *O_opt)
+{
+	if (strlen(o_opt) > 0) {
+	  o_fp = fopen (o_opt, "w");
+	  if (o_fp == NULL) {
+	    text_color_set (DW_COLOR_ERROR);
+	    dw_printf ("Failed to open -o %s for write.\n", o_opt);
+	    exit (EXIT_FAILURE);
+	  }
+	}
+printf ("DEBUG O_opt=%s, strlen=%d\n", O_opt, (int)strlen(O_opt));
+	if (strlen(O_opt) > 0) {
+	  O_fp = fopen (o_opt, "w+");
+	  if (O_fp == NULL) {
+	    text_color_set (DW_COLOR_ERROR);
+	    dw_printf ("Failed to open -O %s for write.\n", O_opt);
+	dw_printf ("errno=%d\n", errno);
+	    exit (EXIT_FAILURE);
+	  }
+	}
+
+}  // end dw_printf_capture_init
 
 
 #if __WIN32__
@@ -335,6 +366,7 @@ void text_color_set ( enum dw_color_e c )
 
 #else
 
+
 void text_color_set ( enum dw_color_e c )
 {
 
@@ -377,6 +409,8 @@ void text_color_set ( enum dw_color_e c )
 	    printf ("%s", t_dark_green[t]);
 	    break;
 	}
+
+	current_color = c;
 }
 
 #endif
@@ -416,7 +450,14 @@ int dw_printf (const char *fmt, ...)
 	len = vsnprintf (buffer, BSIZE, fmt, args);
 	va_end (args);
 
-// TODO: other possible destinations...
+// other possible destinations...
+
+	if (o_fp != NULL && current_color == DW_COLOR_REC) {
+	  fputs (buffer, o_fp);
+	}
+	if (O_fp != NULL) {
+	  fputs (buffer, O_fp);
+	}
 
 	fputs (buffer, stdout);
 	return (len);

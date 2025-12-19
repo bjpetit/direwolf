@@ -1036,6 +1036,14 @@ static int send_one_frame (int c, int p, packet_t pp)
 	    xid_parse (pinfo, info_len, &param, info2text, sizeof(info2text));
 	    dw_printf (" %s\n", info2text);
 	  }
+	  else if (ftype == frame_type_S_SREJ) {
+	    // Additional sequence numbers can be in the info part.
+	    // This does not handle the range case, which we don't generate.
+	    for (int j = 0; j < info_len; j++) {
+	      dw_printf (" +%d", (unsigned int)(pinfo[j]) >> 1);
+	    }
+	    dw_printf ("\n");
+	  }
 	  else {
 	    ax25_safe_print ((char *)pinfo, info_len, ! ax25_is_aprs(pp));
 	    dw_printf ("\n");

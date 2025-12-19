@@ -215,7 +215,10 @@ int main (int argc, char *argv[])
 	char input_file[80];
 	char T_opt_timestamp[40];
 	
-	int t_opt = 1;		/* Text color option. */				
+	int t_opt = 1;		/* Text color option. */
+	char o_opt[80] = "";	// Console capture received raw packets. 
+	char O_opt[80] = "";	// Console capture all output.
+
 	int a_opt = 0;		/* "-a n" interval, in seconds, for audio statistics report.  0 for none. */
 	int g_opt = 0;		/* G3RUH mode, ignoring default for speed. */				
 	int j_opt = 0;		/* 2400 bps PSK compatible with direwolf <= 1.5 */
@@ -236,6 +239,7 @@ int main (int argc, char *argv[])
 	int d_2_opt = 0;	/* "-d 2" option for IL2P.  Default minimal. Repeat for more detail. */
 	int d_c_opt = 0;	/* "-d c" option for connected mode data link state machine. */
 	int d_q_opt = 0;	/* "-d q" option for data link state machine queue. */
+	int d_s_opt = 0;	/* "-d s" print statistics when link ends. */
 
 	int aprstt_debug = 0;	/* "-d d" option for APRStt (think Dtmf) debug. */
 
@@ -295,10 +299,18 @@ int main (int argc, char *argv[])
 
 // FIXME: consider case of no space between t and number.
 
+// Prescan for options that are needed before ant text goes to console.
+
 	for (j=1; j<argc-1; j++) {
 	  if (strcmp(argv[j], "-t") == 0) {
 	    t_opt = atoi (argv[j+1]);
 	    //dw_printf ("DEBUG: text color option = %d.\n", t_opt);
+	  }
+	  if (strcmp(argv[j], "-o") == 0) {
+	    strlcpy (o_opt, argv[j+1], sizeof(o_opt));
+	  }
+	  if (strcmp(argv[j], "-O") == 0) {
+	    strlcpy (O_opt, argv[j+1], sizeof(O_opt));
 	  }
 	}
 
@@ -310,6 +322,10 @@ int main (int argc, char *argv[])
 	// https://www.dennisbabkin.com/blog/?t=how-to-tell-the-real-version-of-windows-your-app-is-running-on
 
 	text_color_init(t_opt);
+	dw_printf_capture_init (o_opt, O_opt);
+
+// Print application version.
+
 	text_color_set(DW_COLOR_INFO);
 	//dw_printf ("Dire Wolf version %d.%d (%s) BETA TEST 1\n", MAJOR_VERSION, MINOR_VERSION, __DATE__);
 	dw_printf ("Dire Wolf DEVELOPMENT version %d.%d %s (%s)\n", MAJOR_VERSION, MINOR_VERSION, "B", __DATE__);
@@ -453,7 +469,7 @@ int main (int argc, char *argv[])
 
 	  /* ':' following option character means arg is required. */
 
-          c = getopt_long(argc, argv, "hP:B:gjJD:U:c:px:r:b:n:d:q:t:ul:L:Sa:E:T:e:X:AI:i:",
+          c = getopt_long(argc, argv, "hP:B:gjJD:U:c:px:r:b:n:d:q:t:ul:L:Sa:E:T:e:X:AI:i:o:O:",
                         long_options, &option_index);
           if (c == -1)
             break;
@@ -666,6 +682,8 @@ int main (int argc, char *argv[])
 	      case 'h':  d_h_opt++; break;			// Hamlib verbose level.
 #endif
 	      case 'c':  d_c_opt++; break;			// Connected mode data link state machine
+								// Repeat for more detail.
+	      case 's':  d_s_opt++; break;			// Print statistics when link ends
 	      case 'x':  d_x_opt++; break;			// FX.25
 	      case '2':  d_2_opt++; break;			// IL2P
 	      case 'd':	 aprstt_debug++; break;			// APRStt (mnemonic Dtmf)
@@ -691,6 +709,8 @@ int main (int argc, char *argv[])
 	    break;
 	      
 	  case 't':				/* Was handled earlier. */
+	  case 'o':
+	  case 'O':
 	    break;
 
 
@@ -791,7 +811,6 @@ int main (int argc, char *argv[])
           }
 
 	  strlcpy (input_file, argv[optind], sizeof(input_file));
-
 	}
 
 /*
@@ -1148,7 +1167,7 @@ int main (int argc, char *argv[])
 	igate_init (&audio_config, &igate_config, &digi_config, d_i_opt);
 	cdigipeater_init (&audio_config, &cdigi_config);
 	pfilter_init (&igate_config, d_f_opt);
-	ax25_link_init (&misc_config, d_c_opt);
+	ax25_link_init (&misc_config, d_c_opt, d_s_opt);
 
 /*
  * Provide the AGW & KISS socket interfaces for use by a client application.
@@ -1355,7 +1374,7 @@ void app_process_rec_packet (int chan, int subchan, int slice, packet_t pp, alev
 	// TODO:  suppress this message if not using soundcard input.
 	// i.e. we have no control over the situation when using SDR.
 
-	if (alevel.rec > 110) {
+	if (!q_h_opt && alevel.rec > 110) {
 
 	  text_color_set(DW_COLOR_ERROR);
 	  dw_printf ("Audio input level is too high. This may cause distortion and reduced decode performance.\n");
@@ -1450,6 +1469,14 @@ void app_process_rec_packet (int chan, int subchan, int slice, packet_t pp, alev
 
 	    xid_parse (pinfo, info_len, &param, info2text, sizeof(info2text));
 	    dw_printf (" %s\n", info2text);
+	  }
+	  else if (ftype == frame_type_S_SREJ) {
+	    // Additional sequence numbers can be in the info part.
+	    // This does not handle the range case, which we don't generate.
+	    for (int j = 0; j < info_len; j++) {
+	      dw_printf (" +%d", (unsigned int)(pinfo[j]) >> 1);
+	    }
+	    dw_printf ("\n");
 	  }
 	  else {
 	    ax25_safe_print ((char *)pinfo, info_len, ( ! ax25_is_aprs(pp)) && ( ! d_u_opt) );
@@ -1742,7 +1769,8 @@ static void usage (void)
 	dw_printf ("Usage: direwolf [options] [ - | stdin | UDP:nnnn ]\n");
 	dw_printf ("Options:\n");
 	dw_printf ("    -c fname       Configuration file name.\n");
-	dw_printf ("    -l logdir      Directory name for log files.  Use . for current.\n");
+	dw_printf ("    -l logdir      Directory name for daily log files.  Use . for current.\n");
+	dw_printf ("    -L logname     Generate single log file with fixed name.\n");
 	dw_printf ("    -r n           Audio sample rate, per sec.\n");
 	dw_printf ("    -n n           Number of audio channels, 1 or 2.\n");
 	dw_printf ("    -b n           Bits per audio sample, 8 or 16.\n");
@@ -1780,6 +1808,7 @@ static void usage (void)
 	dw_printf ("       h             h = hamlib increase verbose level.\n");
 #endif
 	dw_printf ("       c             c = Connected mode data link state machine.\n");
+	dw_printf ("       s             s = Print statistics when link ends.\n");
 	dw_printf ("       x             x = FX.25 increase verbose level.\n");
 	dw_printf ("       2             2 = IL2P.\n");
 	dw_printf ("       d             d = APRStt (DTMF to APRS object translation).\n");

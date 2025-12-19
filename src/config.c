@@ -4785,6 +4785,10 @@ void config_init (char *fname, struct audio_s *p_audio_config,
  * IGTXVIA  channel  [ path ]
  */
 
+// FIXME: Should allow multiple transmit channels.
+// Should probably have multiple IGTXVIA, rather than a list of channels,
+// because they might want different paths.
+
 	  else if (strcasecmp(t, "IGTXVIA") == 0) {
 	    int n;
 

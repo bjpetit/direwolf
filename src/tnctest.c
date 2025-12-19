@@ -1,7 +1,13 @@
+// clear && src/direwolf -c dw0.conf -q h -T %M:%S
+// clear && src/direwolf -c dw1.conf -q h -E R20 -T %M:%S
+// ~/src/direwolf-dev/build64
+// $ src/tnctest -f ../../../src/dplatt/doi25.txt 9000=dw0 9001=dw1
+
+
 //
 //    This file is part of Dire Wolf, an amateur radio packet TNC.
 //
-//    Copyright (C) 2016  John Langner, WB2OSZ
+//    Copyright (C) 2016, 2025  John Langner, WB2OSZ
 //
 //    This program is free software: you can redistribute it and/or modify
 //    it under the terms of the GNU General Public License as published by
@@ -28,6 +34,13 @@
  *		Proper transfer of data will be verified.
  *
  * Usage:	tnctest  [options]  port0=name0  port1=name1 
+ *
+ *		    options:
+ *			-f filename	One way file transfer
+ *				 	rather than builtin test.
+ *
+ *			-n n		Number of packets for bultin test.
+ *
  *
  * Example:	tnctest  localhost:8000=direwolf  COM1=KPC-3+
  *
@@ -70,6 +83,7 @@
 #include <sys/errno.h>
 #endif
 
+#include <getopt.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <assert.h>
@@ -90,8 +104,6 @@
 
 struct agwpe_s {
 
-#if 1
-
   unsigned char portx;		/* 0 for first, 1 for second, etc. */
   unsigned char reserved1;
   unsigned char reserved2;
@@ -102,12 +114,6 @@ struct agwpe_s {
   unsigned char pid;
   unsigned char reserved5;
 
-#else	
-  short portx;			/* 0 for first, 1 for second, etc. */
-  short port_hi_reserved;	
-  short kind_lo;		/* message type */
-  short kind_hi;
-#endif
   char call_from[10];
   char call_to[10];
   int data_len;			/* Number of data bytes following. */
@@ -233,7 +239,7 @@ static char tnc_address[MAX_TNC][12];		/* Name of the TNC used in the frames.  O
 #endif
 
 #define LINE_WIDTH 80
-//#define LINE_WIDTH 120				/* If I was more ambitious I might try to get */
+//#define LINE_WIDTH 120			/* If I was more ambitious I might try to get */
 						/* this from the terminal properties. */
 
 static int column_width;			/* Line width divided by number of TNCs. */
@@ -261,22 +267,25 @@ static int last_rec_seq[MAX_TNC];		/* Each data packet will contain a sequence n
 
 static double start_dtime;
 
+static void bidirectional_data (void);
+static void send_file (void);
 
-static int max_count;
+static char file_name[120];
+static int max_count;		// for bidirectional data test.
+
+
+/*****************************************************
+ *
+ * Main
+ *
+ ****************************************************/
 
 int main (int argc, char *argv[])
 {
 	int j;
 	int timeout;
-	int send_count = 0;
-	int burst_size = 1;
-	int errors = 0;
-
-	//max_count = 20;
-	max_count = 200;
-	//max_count = 6;
-	max_count = 1000;
 	max_count = 9999;
+	strlcpy (file_name, "", sizeof(file_name));
 
 #if __WIN32__
 #else
@@ -288,9 +297,31 @@ int main (int argc, char *argv[])
 	start_dtime = dtime_monotonic();
 
 /*
- * Extract command line args.
+ * Check for any command line options.
  */
-	num_tnc = argc - 1;
+	int opt;
+	while ((opt = getopt(argc, argv, "f:n:")) != -1) {
+          switch (opt) {
+           case 'f':				/* -f one way file transfer */
+	    strlcpy (file_name, optarg, sizeof(file_name));
+            break;
+	
+           case 'n':				/* -n number of packets  */
+	    max_count = atoi(optarg);
+            break;
+	
+	   default:
+	    printf ("Invalid command line option %c", optopt);
+	    exit (EXIT_FAILURE);
+	    break;
+	  }
+	}
+	
+
+/*
+ * Extract two TNC references from command line args.
+ */
+	num_tnc = argc - optind;
 
 	if (num_tnc < 2 || num_tnc > MAX_TNC) {
 	  printf ("Specify minimum 2, maximum %d TNCs on the command line.\n", MAX_TNC);
@@ -298,14 +329,14 @@ int main (int argc, char *argv[])
 	}
 
 	column_width = LINE_WIDTH / num_tnc;
-
-	for (j=0; j<num_tnc; j++) {
+	
+	for (j = 0; optind < argc; optind++, j++) {
 	  char stemp[100];
 	  char *p;
 
 /* Each command line argument should be of the form "port=description." */
 
-	  strlcpy (stemp, argv[j+1], sizeof(stemp));
+	  strlcpy (stemp, argv[optind], sizeof(stemp));
 	  p = strtok (stemp, "=");
 	  if (p == NULL) {
 	    printf ("Internal error 1\n");
@@ -441,6 +472,149 @@ int main (int argc, char *argv[])
 
 	printf ("Send data...\n");
 
+// We have two alternatives.
+// Default: Interleaved data in both directions.
+// File mode: Single direction.  Send a file
+
+	if (strlen(file_name) > 0) {
+	  send_file ();
+	}
+	else {
+	  bidirectional_data();
+	}
+	exit (EXIT_SUCCESS);
+
+} // end main
+
+
+/****************************************************
+ *
+ * Name:	send_file
+ *
+ * Purpose:	Read a file and send in one direction only.
+ *
+ ****************************************************/
+
+static void send_file (void)
+{
+	int j = 0;
+	int timeout = 0;
+	int send_count = 0;
+	int errors = 0;
+	FILE *fp;
+	char stuff[256];
+
+	fp = fopen (file_name, "r");
+	if (fp == NULL) {
+	  printf ("Can't open %s for read.\n", file_name);
+	  exit (EXIT_FAILURE);
+	}
+
+	
+	while (fgets(stuff, sizeof(stuff), fp) != NULL) {
+	  char *q = strrchr (stuff, '\n');
+	  if (q != NULL) *q = '\0';
+	  if (strlen(stuff) == 0) strlcpy (stuff, "+", sizeof(stuff));
+
+	  int throttle_timeout = 120;
+	  while (send_count > last_rec_seq[1] + 20 && throttle_timeout > 0) {
+	    printf ("Throttle send.\n");
+	    SLEEP_MS (1000);
+	    throttle_timeout--;
+	  }
+	  if (throttle_timeout > 0) {
+	    send_count++;
+	    tnc_send_data (0, 1, stuff);
+	  }
+	  else {
+	    printf ("Throttle timeout error.\n");
+	    break;
+	  }
+	}
+	fclose (fp);
+
+/*
+ * Hang around until we get last expected reply or there is too much time with no activity.
+ */
+
+	int no_activity = 0;
+
+#define INACTIVE_TIMEOUT_F 60 
+
+	while (last_rec_seq[1] < send_count && no_activity < INACTIVE_TIMEOUT_F) {
+
+	  SLEEP_MS(1000);
+	  no_activity++;
+	}
+
+	if (last_rec_seq[1] == send_count) {
+	  printf ("Got last expected reply.\n");
+	}
+	else {
+	  printf ("ERROR: Timeout - No incoming activity for %d seconds.\n", no_activity);
+	  errors++;
+	}
+
+/*
+ * Did we get all expected replies?
+ */
+	if (last_rec_seq[1] != send_count) {
+	  printf ("ERROR: Received only %d when we were expecting %d.\n", last_rec_seq[1], send_count);
+	  errors++;
+	}
+
+/*
+ * Ask for disconnect.  Wait until complete.
+ */
+
+	tnc_disconnect (0, 1);
+
+	timeout = 200;		// 20 sec should be generous.
+	int ready = 0;
+	while ( ! ready && timeout > 0) {
+	
+	  SLEEP_MS(100);
+	  timeout--;
+	  ready = 1;
+	  for (j=0; j<num_tnc; j++) {
+	    if (is_connected[j] != 0) ready = 0;
+	  }
+	}
+
+	if (timeout == 0) {
+	  printf ("ERROR: Gave up waiting for disconnect!\n");
+	  tnc_reset (1,0);		// Don't leave TNC in bad state for next time.
+	  SLEEP_MS(10000);
+	  errors++;
+	}
+
+	if (errors != 0) {
+	  printf ("TEST FAILED!\n");
+	  exit (EXIT_FAILURE);
+	}
+
+	printf ("Success!\n");
+
+} // end send_file
+
+
+
+/****************************************************
+ *
+ * Name:	Bidirectional Data
+ *
+ * Purpose:	Send data in both directions concurrently.
+ *
+ ****************************************************/
+
+static void bidirectional_data (void)
+{
+	int j;
+	int timeout;
+	int send_count = 0;
+	int burst_size = 1;
+	int errors = 0;
+
 	while ( send_count < max_count) {
 
 	  char data[80];
@@ -469,9 +643,9 @@ int main (int argc, char *argv[])
 	int last1 = last_rec_seq[1];
 	int no_activity = 0;
 
-#define INACTIVE_TIMEOUT 120 
+#define INACTIVE_TIMEOUT_B 120 
 
-	while (last_rec_seq[0] != max_count && no_activity < INACTIVE_TIMEOUT) {
+	while (last_rec_seq[0] != max_count && no_activity < INACTIVE_TIMEOUT_B) {
 
 	  SLEEP_MS(1000);
 	  no_activity++;
@@ -509,7 +683,7 @@ int main (int argc, char *argv[])
 	tnc_disconnect (0, 1);
 
 	timeout = 200;		// 20 sec should be generous.
-	ready = 0;
+	int ready = 0;
 	while ( ! ready && timeout > 0) {
 	
 	  SLEEP_MS(100);
@@ -532,8 +706,8 @@ int main (int argc, char *argv[])
 	  exit (EXIT_FAILURE);
 	}
 	printf ("Success!\n");
-	exit (EXIT_SUCCESS);
-}
+
+} // end bidirectional_data
 
 
 /*-------------------------------------------------------------------
@@ -562,6 +736,13 @@ int main (int argc, char *argv[])
 void process_rec_data (int my_index, char *data)
 {
 	int n;
+
+	assert (my_index >= 0 && my_index <= 1);
+
+	if (strlen(file_name) > 0) {
+	  last_rec_seq[my_index]++;
+	  return;
+	}
 
 	if (isdigit(*data) && strncmp(data+4, " send", 5) == 0) {
 	  if (my_index > 0) {
@@ -913,7 +1094,8 @@ static void * tnc_thread_net (void *arg)
 
 	    case 'y':					// Outstanding frames waiting on a Port
 
- 	      printf("%*s[R %.3f] *** Outstanding frames waiting %d ***\n", my_index*column_width, "", dnow-start_dtime, 123);  // TODO
+ 	      printf("%*s[R %.3f] *** Outstanding frames waiting %d ***\n", my_index*column_width, "", dnow-start_dtime, 123);  
+// TODO outstanding_frames_waiting[my_index] = ...
 
 	      break;
 

@@ -4,6 +4,8 @@
 
 ### New Features:
 
+- Improved generation of SREJ frames for more efficient AX.25 v2.2 connected mode.
+
 - Add delay before exit so any error messages can be read before window disappears.
 
 - New SCHANNEL feature to map a channel number to an external serial port TNC.    See [APRS-LoRa-VHF-APRS-Bridge.pdf](https://raw.githubusercontent.com/wb2osz/direwolf-doc/main/APRS-LoRa-VHF-APRS-Bridge.pdf) for explanation and example.

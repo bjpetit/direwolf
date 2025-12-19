@@ -54,7 +54,7 @@
 
 #include "textcolor.h"
 #include "xid.h"
-
+#include "ax25_link.h"
 
 
 #define FI_Format_Indicator	0x82	
@@ -62,12 +62,15 @@
 
 #define PI_Classes_of_Procedures	2	
 #define PI_HDLC_Optional_Functions	3	
-#define PI_I_Field_Length_Rx		6	
+#define PI_I_Field_Length_Tx		5	// Maximum
+#define PI_I_Field_Length_Rx		6	// Maximum
+#define PI_Window_Size_Tx		7
 #define PI_Window_Size_Rx		8	
-#define PI_Ack_Timer			9	
-#define PI_Retries			10	
+#define PI_Ack_Timer			9	// T1
+#define PI_Retries			10	// N2
+#define PI_Idle_Timer			11	// T3
 
-// Is this stanard or Dave's creation?
+// Vendor specific range.
 #define PI_Compression_Algorithm_Mask	65
 #define PI_TX_Window_Bits		66
 #define PI_RX_Window_Bits		67
@@ -165,7 +168,9 @@ int xid_parse (unsigned char *info, int info_len, struct xid_param_s *result, ch
 	result->full_duplex = G_UNKNOWN;
 	result->srej = srej_not_specified;
 	result->modulo = modulo_unknown;
+	result->i_field_length_tx = G_UNKNOWN;
 	result->i_field_length_rx = G_UNKNOWN;
+	result->window_size_tx = G_UNKNOWN;
 	result->window_size_rx = G_UNKNOWN;
 	result->ack_timer = G_UNKNOWN;
 	result->retries = G_UNKNOWN;
@@ -305,6 +310,20 @@ int xid_parse (unsigned char *info, int info_len, struct xid_param_s *result, ch
 
 	      break;
 
+	    case PI_I_Field_Length_Tx:	
+	      
+	      result->i_field_length_tx = pval / 8;
+
+	      snprintf (stemp, sizeof(stemp), "I-Field-Length-Tx=%d ", result->i_field_length_tx);
+	      strlcat (desc, stemp, desc_size);
+
+	      if (pval & 0x7) {
+	        text_color_set (DW_COLOR_ERROR);
+	        dw_printf ("XID error: I Field Length Tx, %d, is not a whole number of bytes.\n", pval);
+	      }
+
+	      break;
+
 	    case PI_I_Field_Length_Rx:	
 	      
 	      result->i_field_length_rx = pval / 8;
@@ -319,6 +338,22 @@ int xid_parse (unsigned char *info, int info_len, struct xid_param_s *result, ch
 
 	      break;
 
+	    case PI_Window_Size_Tx:	
+
+	      result->window_size_tx = pval;
+
+	      snprintf (stemp, sizeof(stemp), "Window-Size-Tx=%d ", result->window_size_tx);
+	      strlcat (desc, stemp, desc_size);
+
+	      if (pval < AX25_K_MAXFRAME_EXTENDED_MIN || pval > AX25_K_MAXFRAME_EXTENDED_MAX) {
+	        text_color_set (DW_COLOR_ERROR);
+	        dw_printf ("XID error: Window Size Tx, %d, is not in range of %d thru %d.\n", pval,
+						AX25_K_MAXFRAME_EXTENDED_MIN, AX25_K_MAXFRAME_EXTENDED_MAX);
+	        result->window_size_rx = AX25_K_MAXFRAME_EXTENDED_DEFAULT;
+	      }
+
+	      break;
+
 	    case PI_Window_Size_Rx:	
 
 	      result->window_size_rx = pval;
@@ -326,11 +361,11 @@ int xid_parse (unsigned char *info, int info_len, struct xid_param_s *result, ch
 	      snprintf (stemp, sizeof(stemp), "Window-Size-Rx=%d ", result->window_size_rx);
 	      strlcat (desc, stemp, desc_size);
 
-	      if (pval < 1 || pval > 127) {
+	      if (pval < AX25_K_MAXFRAME_EXTENDED_MIN || pval > AX25_K_MAXFRAME_EXTENDED_MAX) {
 	        text_color_set (DW_COLOR_ERROR);
-	        dw_printf ("XID error: Window Size Rx, %d, is not in range of 1 thru 127.\n", pval);
-	        result->window_size_rx = 127;
-		// Let the caller deal with modulo 8 consideration.
+	        dw_printf ("XID error: Window Size Rx, %d, is not in range of %d thru %d.\n", pval,
+				AX25_K_MAXFRAME_EXTENDED_MIN, AX25_K_MAXFRAME_EXTENDED_MAX);
+	        result->window_size_rx = AX25_K_MAXFRAME_EXTENDED_DEFAULT;
 	      }
 
 //continue here with more error checking.
