@@ -5142,7 +5142,20 @@ static void xid_frame (ax25_dlsm_t *S, cmdres_t cr, int pf, unsigned char *info_
 	        ok = xid_parse (info_ptr, info_len, &param, desc, sizeof(desc));
 
 	        if (ok) {
-		  complete_negotiation (S, &param);
+		  // A v2.2 station should never advertise modulo-8 in an XID response.
+		  // If it does, treat it like a broken XID implementation: add to the
+		  // runtime noxid list and do NOT apply the broken params — leave the
+		  // current connection with its v2.2 defaults (modulo-128).
+		  if (param.modulo == modulo_8) {
+		    text_color_set(DW_COLOR_INFO);
+		    dw_printf ("Stream %d: %s returned modulo-8 in XID response. Ignoring and proceeding without XID this session.\n", S->stream_id, S->addrs[PEERCALL]);
+		    dw_printf ("To make this permanent, add \"NOXID %s\" to the configuration file.\n", S->addrs[PEERCALL]);
+		    g_misc_config_p->noxid_addrs = (char**)realloc (g_misc_config_p->noxid_addrs, sizeof(char*) * (g_misc_config_p->noxid_count + 1));
+		    g_misc_config_p->noxid_addrs[g_misc_config_p->noxid_count++] = strdup (S->addrs[PEERCALL]);
+		  }
+		  else {
+		    complete_negotiation (S, &param);
+		  }
 	        }
 
 	        S->mdl_state = mdl_state_0_ready;
@@ -5584,10 +5597,17 @@ static void tm201_expiry (ax25_dlsm_t *S)
 	    if (S->mdl_rc > S->n2_retry) {
               text_color_set(DW_COLOR_ERROR);
               dw_printf ("Stream %d: AX.25 Protocol Error MDL-C: Management retry limit exceeded.\n", S->stream_id);
+	      // Station did not respond to XID after all retries.  Add to runtime noxid list
+	      // so future connection attempts skip XID negotiation without wasting retries.
+	      text_color_set(DW_COLOR_INFO);
+	      dw_printf ("Stream %d: %s did not respond to XID. Proceeding without XID this session.\n", S->stream_id, S->addrs[PEERCALL]);
+	      dw_printf ("To make this permanent, add \"NOXID %s\" to the configuration file.\n", S->addrs[PEERCALL]);
+	      g_misc_config_p->noxid_addrs = (char**)realloc (g_misc_config_p->noxid_addrs, sizeof(char*) * (g_misc_config_p->noxid_count + 1));
+	      g_misc_config_p->noxid_addrs[g_misc_config_p->noxid_count++] = strdup (S->addrs[PEERCALL]);
 	      S->mdl_state = mdl_state_0_ready;
 	    }
 	    else {
-	      // No response.  Ask again.
+	      // No response yet.  Retry.
 
               initiate_negotiation (S, &param);
 
